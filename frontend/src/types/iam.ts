@@ -1,6 +1,6 @@
 export type Role = "USER" | "ADMIN";
 
-export type AuthStatus = "loading" | "anonymous" | "authenticated";
+export type AuthStatus = "loading" | "anonymous" | "pending_2fa" | "authenticated";
 
 export type User = {
   id: string;

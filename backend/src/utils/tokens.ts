@@ -10,6 +10,12 @@ type AccessTokenPayload = {
   email: string;
 };
 
+type TwoFactorChallengePayload = {
+  sub: string;
+  role: Role;
+  email: string;
+};
+
 const accessCookieName = "access_token";
 const refreshCookieName = "refresh_token";
 
@@ -20,6 +26,14 @@ export const createAccessToken = (payload: AccessTokenPayload) =>
 
 export const verifyAccessToken = (token: string): AccessTokenPayload =>
   jwt.verify(token, env.JWT_ACCESS_SECRET) as AccessTokenPayload;
+
+export const createTwoFactorChallengeToken = (payload: TwoFactorChallengePayload) =>
+  jwt.sign(payload, env.JWT_ACCESS_SECRET as Secret, {
+    expiresIn: "5m",
+  } as SignOptions);
+
+export const verifyTwoFactorChallengeToken = (token: string): TwoFactorChallengePayload =>
+  jwt.verify(token, env.JWT_ACCESS_SECRET) as TwoFactorChallengePayload;
 
 export const createRefreshToken = () => crypto.randomBytes(48).toString("hex");
 

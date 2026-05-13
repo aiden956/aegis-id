@@ -1,11 +1,14 @@
-import { ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { Input } from "../../components/ui/Input";
 import { AuthFrame } from "./AuthFrame";
 
 type RegisterPageProps = {
-  onRegister: (name: string, email: string, password: string) => Promise<string>;
+  onRegister: (
+    name: string,
+    email: string,
+    password: string,
+  ) => Promise<string>;
 };
 
 export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
@@ -50,6 +53,7 @@ export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
           label="Full name"
           name="name"
           onChange={setName}
+          placeholder="Your full name"
           type="text"
           value={name}
         />
@@ -58,7 +62,7 @@ export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
           label="Email"
           name="email"
           onChange={setEmail}
-          placeholder="student@aegisid.test"
+          placeholder="your@email.com"
           type="email"
           value={email}
         />
@@ -67,7 +71,7 @@ export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
           label="Password"
           name="password"
           onChange={setPassword}
-          placeholder="Choose a strong password"
+          placeholder="••••••••"
           type="password"
           value={password}
         />
@@ -77,13 +81,16 @@ export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
         {success ? (
           <p className="text-sm font-medium text-green-700">{success}</p>
         ) : null}
-        <button className="primary-button w-full" disabled={isSubmitting} type="submit">
-          <ShieldCheck size={18} />
-          {isSubmitting ? "Creating account..." : "Create account"}
+        <button
+          className="primary-button w-full"
+          disabled={isSubmitting}
+          type="submit"
+        >
+          {isSubmitting ? "Signing up..." : "Sign up"}
         </button>
       </form>
       <p className="text-center text-sm text-slate-600">
-        Already registered?{" "}
+        Already have an account?{" "}
         <Link className="font-semibold text-blue-700" to="/login">
           Sign in
         </Link>

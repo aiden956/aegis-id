@@ -16,23 +16,33 @@ import type { AuditLog, AuthStatus, Role, User } from "../types/iam";
 type AppRoutesProps = {
   status: AuthStatus;
   currentUser: User | null;
+  pendingUser: User | null;
   users: User[];
   logs: AuditLog[];
   onLogin: (email: string, password: string) => Promise<string>;
   onRegister: (name: string, email: string, password: string) => Promise<string>;
+  onVerifyTwoFactor: (code: string) => Promise<string>;
   onLogout: () => Promise<void>;
   onRoleChange: (userId: string, role: Role) => Promise<void>;
+  onStartTwoFactorSetup: () => Promise<{ qrCodeDataUrl: string; manualEntryKey: string }>;
+  onEnableTwoFactor: (code: string) => Promise<void>;
+  onDisableTwoFactor: (code: string) => Promise<void>;
 };
 
 export const AppRoutes = ({
   status,
   currentUser,
+  pendingUser,
   users,
   logs,
   onLogin,
   onRegister,
+  onVerifyTwoFactor,
   onLogout,
   onRoleChange,
+  onStartTwoFactorSetup,
+  onEnableTwoFactor,
+  onDisableTwoFactor,
 }: AppRoutesProps) => (
   <Routes>
     <Route path="/login" element={<LoginPage onLogin={onLogin} status={status} />} />
@@ -46,7 +56,10 @@ export const AppRoutes = ({
         )
       }
     />
-    <Route path="/verify-2fa" element={<TwoFactorPage pendingUser={null} onVerify={() => "/login"} />} />
+    <Route
+      path="/verify-2fa"
+      element={<TwoFactorPage pendingUser={pendingUser} onVerify={onVerifyTwoFactor} />}
+    />
     <Route
       path="/unauthorized"
       element={<UnauthorizedPage user={currentUser} onLogout={onLogout} />}
@@ -60,7 +73,17 @@ export const AppRoutes = ({
     >
       <Route index element={<Navigate to="/dashboard" replace />} />
       <Route path="/dashboard" element={<DashboardPage user={currentUser} />} />
-      <Route path="/security" element={<SecurityPage user={currentUser} />} />
+      <Route
+        path="/security"
+        element={
+          <SecurityPage
+            user={currentUser}
+            onStartSetup={onStartTwoFactorSetup}
+            onEnable={onEnableTwoFactor}
+            onDisable={onDisableTwoFactor}
+          />
+        }
+      />
       <Route path="/profile" element={<ProfilePage user={currentUser} />} />
       <Route
         path="/admin"
@@ -100,6 +123,10 @@ const ProtectedRoute = ({
 }) => {
   if (status === "loading") {
     return <main className="p-6 text-sm text-slate-600">Loading session...</main>;
+  }
+
+  if (status === "pending_2fa") {
+    return <Navigate to="/verify-2fa" replace />;
   }
 
   if (status !== "authenticated") {

@@ -1,4 +1,5 @@
 import { BadgeCheck, Smartphone } from "lucide-react";
+import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
 import { Input } from "../../components/ui/Input";
 import type { User } from "../../types/iam";
@@ -6,15 +7,35 @@ import { AuthFrame } from "./AuthFrame";
 
 type TwoFactorPageProps = {
   pendingUser: User | null;
-  onVerify: () => string;
+  onVerify: (code: string) => Promise<string>;
 };
 
 export const TwoFactorPage = ({ pendingUser, onVerify }: TwoFactorPageProps) => {
   const navigate = useNavigate();
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!pendingUser) {
     return <Navigate to="/login" replace />;
   }
+
+  const handleVerify = async () => {
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      const destination = await onVerify(code);
+      navigate(destination);
+    } catch (verifyError) {
+      setError(
+        verifyError instanceof Error
+          ? verifyError.message
+          : "Unable to verify authenticator code",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <AuthFrame
@@ -31,14 +52,24 @@ export const TwoFactorPage = ({ pendingUser, onVerify }: TwoFactorPageProps) => 
           </p>
         </div>
       </div>
-      <Input label="6-digit code" type="text" value="123456" />
+      <Input
+        autoComplete="one-time-code"
+        label="6-digit code"
+        name="totp_code"
+        onChange={setCode}
+        placeholder="123456"
+        type="text"
+        value={code}
+      />
+      {error ? <p className="text-sm font-medium text-red-700">{error}</p> : null}
       <button
         className="primary-button w-full"
         type="button"
-        onClick={() => navigate(onVerify())}
+        disabled={isSubmitting}
+        onClick={handleVerify}
       >
         <BadgeCheck size={18} />
-        Verify and continue
+        {isSubmitting ? "Verifying..." : "Verify and continue"}
       </button>
       <Link className="text-center text-sm font-semibold text-blue-700" to="/login">
         Use another account

@@ -68,6 +68,8 @@ usersRoutes.patch(
           role: true,
           isTwoFactorEnabled: true,
           provider: true,
+          createdAt: true,
+          updatedAt: true,
         },
       });
 

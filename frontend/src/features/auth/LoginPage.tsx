@@ -1,6 +1,8 @@
-import { LockKeyhole } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { Link, Navigate, useNavigate } from "react-router";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
+import { startOAuthLogin } from "../../api/auth";
+import githubIcon from "../../assets/brands/github.svg";
+import googleIcon from "../../assets/brands/google.svg";
 import { Input } from "../../components/ui/Input";
 import type { AuthStatus } from "../../types/iam";
 import { AuthFrame } from "./AuthFrame";
@@ -12,10 +14,26 @@ type LoginPageProps = {
 
 export const LoginPage = ({ onLogin, status }: LoginPageProps) => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const oauthError = searchParams.get("error");
+
+  const oauthErrorMessage = (() => {
+    if (!oauthError) return null;
+    if (oauthError === "oauth_conflict") {
+      return "This email already belongs to another sign-in method.";
+    }
+    if (oauthError === "oauth_not_configured") {
+      return "OAuth provider is not configured on the server.";
+    }
+    if (oauthError === "oauth_invalid_state") {
+      return "OAuth login failed state validation. Please try again.";
+    }
+    return "OAuth login failed. Please try again.";
+  })();
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -27,7 +45,9 @@ export const LoginPage = ({ onLogin, status }: LoginPageProps) => {
       navigate(destination);
     } catch (submitError) {
       setError(
-        submitError instanceof Error ? submitError.message : "Unable to sign in",
+        submitError instanceof Error
+          ? submitError.message
+          : "Unable to sign in",
       );
     } finally {
       setIsSubmitting(false);
@@ -37,8 +57,13 @@ export const LoginPage = ({ onLogin, status }: LoginPageProps) => {
   if (status === "authenticated") {
     return <Navigate to="/dashboard" replace />;
   }
+  if (status === "pending_2fa") {
+    return <Navigate to="/verify-2fa" replace />;
+  }
   if (status === "loading") {
-    return <main className="p-6 text-sm text-slate-600">Loading session...</main>;
+    return (
+      <main className="p-6 text-sm text-slate-600">Loading session...</main>
+    );
   }
 
   return (
@@ -53,7 +78,7 @@ export const LoginPage = ({ onLogin, status }: LoginPageProps) => {
           label="Email"
           name="email"
           onChange={setEmail}
-          placeholder="admin@aegisid.test"
+          placeholder="your@email.com"
           type="email"
           value={email}
         />
@@ -62,34 +87,48 @@ export const LoginPage = ({ onLogin, status }: LoginPageProps) => {
           label="Password"
           name="password"
           onChange={setPassword}
-          placeholder="aegisid-demo-password"
+          placeholder="••••••••"
           type="password"
           value={password}
         />
         {error ? (
           <p className="text-sm font-medium text-red-700">{error}</p>
         ) : null}
-        <button className="primary-button w-full" disabled={isSubmitting} type="submit">
-          <LockKeyhole size={18} />
+        <button
+          className="primary-button w-full"
+          disabled={isSubmitting}
+          type="submit"
+        >
           {isSubmitting ? "Signing in..." : "Sign in"}
         </button>
       </form>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <button className="secondary-button" disabled type="button">
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => startOAuthLogin("google")}
+        >
           <GoogleMark />
           Google OAuth
         </button>
-        <button className="secondary-button" disabled type="button">
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => startOAuthLogin("github")}
+        >
           <GitHubMark />
           GitHub OAuth
         </button>
       </div>
+      {oauthErrorMessage ? (
+        <p className="text-sm font-medium text-red-700">{oauthErrorMessage}</p>
+      ) : null}
 
       <p className="text-center text-sm text-slate-600">
-        New to the portal?{" "}
+        Don't have an account?{" "}
         <Link className="font-semibold text-blue-700" to="/register">
-          Create an account
+          Sign up
         </Link>
       </p>
     </AuthFrame>
@@ -97,13 +136,9 @@ export const LoginPage = ({ onLogin, status }: LoginPageProps) => {
 };
 
 const GoogleMark = () => (
-  <span className="flex size-[18px] items-center justify-center rounded-full bg-white text-xs font-black text-blue-700">
-    G
-  </span>
+  <img alt="" className="size-7" src={googleIcon} aria-hidden="true" />
 );
 
 const GitHubMark = () => (
-  <span className="flex size-[18px] items-center justify-center rounded-full bg-slate-950 text-xs font-black text-white">
-    GH
-  </span>
+  <img alt="" className="size-4.5" src={githubIcon} aria-hidden="true" />
 );
