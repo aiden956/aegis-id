@@ -6,12 +6,17 @@ import {
   disableTwoFactor,
   enableTwoFactor,
   getCurrentUser,
+  getWebAuthnLoginOptions,
+  getWebAuthnRegistrationOptions,
   login,
   logout,
   refreshSession,
   register,
+  verifyWebAuthnLogin,
+  verifyWebAuthnRegistration,
   verifyTwoFactorLogin,
 } from "./api/auth";
+import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { AppRoutes } from "./app/AppRoutes";
 import type { AuditLog, AuthStatus, Role, User } from "./types/iam";
 
@@ -145,6 +150,29 @@ const App = () => {
     setCurrentUser(user);
   }, []);
 
+  const handleRegisterPasskey = useCallback(async () => {
+    const options = await getWebAuthnRegistrationOptions();
+    const credential = await startRegistration({ optionsJSON: options });
+    await verifyWebAuthnRegistration(credential);
+    const user = await getCurrentUser();
+    setCurrentUser(user);
+  }, []);
+
+  const handleLoginWithPasskey = useCallback(
+    async (email?: string) => {
+      const options = await getWebAuthnLoginOptions(email);
+      const assertion = await startAuthentication({ optionsJSON: options });
+      await verifyWebAuthnLogin(assertion);
+      const user = await getCurrentUser();
+      setCurrentUser(user);
+      setPendingUser(null);
+      setStatus("authenticated");
+      await syncAdminData(user);
+      return user.role === "ADMIN" ? "/admin" : "/dashboard";
+    },
+    [syncAdminData],
+  );
+
   return (
     <BrowserRouter>
       <AppRoutes
@@ -156,11 +184,13 @@ const App = () => {
         onLogin={handleLogin}
         onRegister={handleRegister}
         onVerifyTwoFactor={handleVerifyTwoFactor}
+        onLoginWithPasskey={handleLoginWithPasskey}
         onLogout={handleLogout}
         onRoleChange={handleRoleChange}
         onStartTwoFactorSetup={beginTwoFactorSetup}
         onEnableTwoFactor={handleEnableTwoFactor}
         onDisableTwoFactor={handleDisableTwoFactor}
+        onRegisterPasskey={handleRegisterPasskey}
       />
     </BrowserRouter>
   );

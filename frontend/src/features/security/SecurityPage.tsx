@@ -1,4 +1,9 @@
-import { Fingerprint, KeyRound, QrCode, Smartphone } from "lucide-react";
+import {
+  Fingerprint,
+  KeyRound,
+  QrCode,
+  Smartphone,
+} from "lucide-react";
 import { useState } from "react";
 import { Page } from "../../components/ui/Page";
 import { PageHeader } from "../../components/ui/PageHeader";
@@ -9,9 +14,13 @@ import type { User } from "../../types/iam";
 
 type SecurityPageProps = {
   user: User | null;
-  onStartSetup: () => Promise<{ qrCodeDataUrl: string; manualEntryKey: string }>;
+  onStartSetup: () => Promise<{
+    qrCodeDataUrl: string;
+    manualEntryKey: string;
+  }>;
   onEnable: (code: string) => Promise<void>;
   onDisable: (code: string) => Promise<void>;
+  onRegisterPasskey: () => Promise<void>;
 };
 
 export const SecurityPage = ({
@@ -19,6 +28,7 @@ export const SecurityPage = ({
   onStartSetup,
   onEnable,
   onDisable,
+  onRegisterPasskey,
 }: SecurityPageProps) => {
   const [setupData, setSetupData] = useState<{
     qrCodeDataUrl: string;
@@ -37,7 +47,9 @@ export const SecurityPage = ({
     try {
       await task();
     } catch (taskError) {
-      setError(taskError instanceof Error ? taskError.message : "Request failed");
+      setError(
+        taskError instanceof Error ? taskError.message : "Request failed",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -65,6 +77,13 @@ export const SecurityPage = ({
       await onDisable(disableCode);
       setDisableCode("");
       setMessage("Two-factor authentication disabled.");
+    });
+  };
+
+  const handleRegisterPasskey = async () => {
+    await runWithStatus(async () => {
+      await onRegisterPasskey();
+      setMessage("Passkey registered successfully.");
     });
   };
 
@@ -99,7 +118,8 @@ export const SecurityPage = ({
                 src={setupData.qrCodeDataUrl}
               />
               <p className="mt-3 text-sm text-slate-700">
-                Manual key: <span className="font-mono">{setupData.manualEntryKey}</span>
+                Manual key:{" "}
+                <span className="font-mono">{setupData.manualEntryKey}</span>
               </p>
               <input
                 className="mt-3 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500"
@@ -119,7 +139,11 @@ export const SecurityPage = ({
             </div>
           ) : null}
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <button className="secondary-button" type="button" onClick={handleSetup}>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={handleSetup}
+            >
               <Smartphone size={18} />
               Setup 2FA
             </button>
@@ -146,7 +170,9 @@ export const SecurityPage = ({
               </button>
             </div>
           ) : null}
-          {error ? <p className="mt-3 text-sm font-medium text-red-700">{error}</p> : null}
+          {error ? (
+            <p className="mt-3 text-sm font-medium text-red-700">{error}</p>
+          ) : null}
           {message ? (
             <p className="mt-3 text-sm font-medium text-green-700">{message}</p>
           ) : null}
@@ -164,7 +190,9 @@ export const SecurityPage = ({
                   <div>
                     <p className="font-semibold">{provider.toUpperCase()}</p>
                     <p className="text-sm text-slate-600">
-                      {connected ? "Connected to this account" : "Available to connect"}
+                      {connected
+                        ? "Connected to this account"
+                        : "Available to connect"}
                     </p>
                   </div>
                   <StatusPill status={connected ? "success" : "warning"}>
@@ -177,23 +205,50 @@ export const SecurityPage = ({
         </Panel>
 
         <Panel title="Passkeys">
-          <div className="flex items-start gap-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-blue-950">
-            <Fingerprint size={42} />
-            <div>
-              <p className="font-semibold">Passkey enrollment</p>
-              <p className="mt-1 text-sm leading-6 text-blue-800">
-                Register trusted devices for phishing-resistant sign-in and step-up
-                verification.
-              </p>
+          <div className="rounded-lg border border-blue-200 bg-gradient-to-br from-blue-50 to-slate-50 p-4">
+            <div className="flex items-start gap-4">
+              <span className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-white text-blue-700 shadow-sm ring-1 ring-blue-100">
+                <Fingerprint size={28} />
+              </span>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-semibold text-slate-950">
+                    Biometric passkey sign-in
+                  </p>
+                  <StatusPill status={user?.hasPasskey ? "success" : "warning"}>
+                    {user?.hasPasskey ? "Enrolled" : "Not enrolled"}
+                  </StatusPill>
+                </div>
+                <p className="mt-1 max-w-xl text-sm leading-6 text-slate-600">
+                  Use your device biometrics, PIN, or security key to sign in
+                  without typing a password.
+                </p>
+              </div>
             </div>
           </div>
+          <button
+            className="secondary-button mt-4"
+            type="button"
+            disabled={isSubmitting}
+            onClick={handleRegisterPasskey}
+          >
+            <Fingerprint size={18} />
+            {isSubmitting
+              ? "Registering..."
+              : user?.hasPasskey
+                ? "Add another passkey"
+                : "Register passkey"}
+          </button>
         </Panel>
 
         <Panel title="Session policy">
           <div className="space-y-3">
             <SessionRow label="Access token" value="Short-lived token" />
             <SessionRow label="Refresh token" value="Rotating token strategy" />
-            <SessionRow label="Browser storage" value="HTTP-only secure cookies" />
+            <SessionRow
+              label="Browser storage"
+              value="HTTP-only secure cookies"
+            />
             <SessionRow label="Logout behavior" value="Revoke refresh token" />
           </div>
         </Panel>

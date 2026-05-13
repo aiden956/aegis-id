@@ -1,5 +1,11 @@
 import type { User } from "../types/iam";
 import { apiRequest } from "./client";
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON,
+} from "@simplewebauthn/types";
 
 type AuthResponse = {
   user: User;
@@ -74,6 +80,40 @@ export const disableTwoFactor = async (code: string) => {
   const response = await apiRequest<AuthResponse>("/auth/2fa/disable", {
     method: "POST",
     body: JSON.stringify({ code }),
+  });
+  return response.user;
+};
+
+export const getWebAuthnRegistrationOptions = async () => {
+  const response = await apiRequest<{
+    options: PublicKeyCredentialCreationOptionsJSON;
+  }>("/auth/webauthn/register/options", {
+    method: "POST",
+  });
+  return response.options;
+};
+
+export const verifyWebAuthnRegistration = async (response: RegistrationResponseJSON) => {
+  await apiRequest<void>("/auth/webauthn/register/verify", {
+    method: "POST",
+    body: JSON.stringify({ response }),
+  });
+};
+
+export const getWebAuthnLoginOptions = async (email?: string) => {
+  const response = await apiRequest<{
+    options: PublicKeyCredentialRequestOptionsJSON;
+  }>("/auth/webauthn/login/options", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  return response.options;
+};
+
+export const verifyWebAuthnLogin = async (responseBody: AuthenticationResponseJSON) => {
+  const response = await apiRequest<AuthResponse>("/auth/webauthn/login/verify", {
+    method: "POST",
+    body: JSON.stringify({ response: responseBody }),
   });
   return response.user;
 };

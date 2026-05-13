@@ -19,6 +19,9 @@ const envSchema = z.object({
   GITHUB_REDIRECT_URI: z.string().url().default("http://localhost:4000/api/auth/github/callback"),
   TOTP_SECRET_ENCRYPTION_KEY: z.string().min(16),
   TOTP_ISSUER: z.string().default("AegisID"),
+  WEBAUTHN_RP_ID: z.string().default("localhost"),
+  WEBAUTHN_RP_NAME: z.string().default("AegisID"),
+  WEBAUTHN_ORIGIN: z.string().url().default("http://localhost:5173"),
 });
 
 const parsed = envSchema.safeParse(process.env);

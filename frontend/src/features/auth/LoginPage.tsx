@@ -9,17 +9,37 @@ import { AuthFrame } from "./AuthFrame";
 
 type LoginPageProps = {
   onLogin: (email: string, password: string) => Promise<string>;
+  onLoginWithPasskey: (email?: string) => Promise<string>;
   status: AuthStatus;
 };
 
-export const LoginPage = ({ onLogin, status }: LoginPageProps) => {
+export const LoginPage = ({ onLogin, onLoginWithPasskey, status }: LoginPageProps) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPasskeySubmitting, setIsPasskeySubmitting] = useState(false);
   const oauthError = searchParams.get("error");
+
+  const toFriendlyError = (value: unknown) => {
+    const rawMessage =
+      value instanceof Error ? value.message : "We couldn't complete your sign-in request.";
+    const normalized = rawMessage.toLowerCase();
+
+    if (normalized.includes("timed out") || normalized.includes("not allowed")) {
+      return "Passkey sign-in was canceled or took too long. Please try again and approve the passkey prompt.";
+    }
+    if (normalized.includes("not supported")) {
+      return "This browser or device doesn't support passkey sign-in.";
+    }
+    if (normalized.includes("no passkey registered")) {
+      return "No passkey is registered for this account yet. Sign in with password and add one in Security settings.";
+    }
+
+    return rawMessage;
+  };
 
   const oauthErrorMessage = (() => {
     if (!oauthError) return null;
@@ -44,13 +64,22 @@ export const LoginPage = ({ onLogin, status }: LoginPageProps) => {
       const destination = await onLogin(email, password);
       navigate(destination);
     } catch (submitError) {
-      setError(
-        submitError instanceof Error
-          ? submitError.message
-          : "Unable to sign in",
-      );
+      setError(toFriendlyError(submitError));
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handlePasskeyLogin = async () => {
+    setError(null);
+    setIsPasskeySubmitting(true);
+    try {
+      const destination = await onLoginWithPasskey(email);
+      navigate(destination);
+    } catch (passkeyError) {
+      setError(toFriendlyError(passkeyError));
+    } finally {
+      setIsPasskeySubmitting(false);
     }
   };
 
@@ -104,6 +133,14 @@ export const LoginPage = ({ onLogin, status }: LoginPageProps) => {
       </form>
 
       <div className="grid gap-3 sm:grid-cols-2">
+        <button
+          className="secondary-button sm:col-span-2"
+          type="button"
+          disabled={isPasskeySubmitting}
+          onClick={handlePasskeyLogin}
+        >
+          {isPasskeySubmitting ? "Checking passkey..." : "Sign in with passkey"}
+        </button>
         <button
           className="secondary-button"
           type="button"

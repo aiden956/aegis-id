@@ -9,6 +9,7 @@ export type User = {
   role: Role;
   isTwoFactorEnabled: boolean;
   provider?: string;
+  hasPasskey?: boolean;
   createdAt?: string;
   updatedAt?: string;
 };

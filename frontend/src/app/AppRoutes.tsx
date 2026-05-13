@@ -22,11 +22,13 @@ type AppRoutesProps = {
   onLogin: (email: string, password: string) => Promise<string>;
   onRegister: (name: string, email: string, password: string) => Promise<string>;
   onVerifyTwoFactor: (code: string) => Promise<string>;
+  onLoginWithPasskey: (email?: string) => Promise<string>;
   onLogout: () => Promise<void>;
   onRoleChange: (userId: string, role: Role) => Promise<void>;
   onStartTwoFactorSetup: () => Promise<{ qrCodeDataUrl: string; manualEntryKey: string }>;
   onEnableTwoFactor: (code: string) => Promise<void>;
   onDisableTwoFactor: (code: string) => Promise<void>;
+  onRegisterPasskey: () => Promise<void>;
 };
 
 export const AppRoutes = ({
@@ -38,14 +40,25 @@ export const AppRoutes = ({
   onLogin,
   onRegister,
   onVerifyTwoFactor,
+  onLoginWithPasskey,
   onLogout,
   onRoleChange,
   onStartTwoFactorSetup,
   onEnableTwoFactor,
   onDisableTwoFactor,
+  onRegisterPasskey,
 }: AppRoutesProps) => (
   <Routes>
-    <Route path="/login" element={<LoginPage onLogin={onLogin} status={status} />} />
+    <Route
+      path="/login"
+      element={
+        <LoginPage
+          onLogin={onLogin}
+          onLoginWithPasskey={onLoginWithPasskey}
+          status={status}
+        />
+      }
+    />
     <Route
       path="/register"
       element={
@@ -81,6 +94,7 @@ export const AppRoutes = ({
             onStartSetup={onStartTwoFactorSetup}
             onEnable={onEnableTwoFactor}
             onDisable={onDisableTwoFactor}
+            onRegisterPasskey={onRegisterPasskey}
           />
         }
       />
