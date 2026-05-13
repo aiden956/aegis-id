@@ -1,10 +1,10 @@
 import { AlertTriangle } from "lucide-react";
 import { useNavigate } from "react-router";
-import type { DemoUser } from "../../types/iam";
+import type { User } from "../../types/iam";
 
 type UnauthorizedPageProps = {
-  user: DemoUser | null;
-  onLogout: () => void;
+  user: User | null;
+  onLogout: () => Promise<void>;
 };
 
 export const UnauthorizedPage = ({ user, onLogout }: UnauthorizedPageProps) => {
@@ -34,8 +34,8 @@ export const UnauthorizedPage = ({ user, onLogout }: UnauthorizedPageProps) => {
           <button
             className="primary-button"
             type="button"
-            onClick={() => {
-              onLogout();
+            onClick={async () => {
+              await onLogout();
               navigate("/login");
             }}
           >

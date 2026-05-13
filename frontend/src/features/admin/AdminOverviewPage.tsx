@@ -4,11 +4,11 @@ import { Page } from "../../components/ui/Page";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Panel } from "../../components/ui/Panel";
 import { SessionRow } from "../../components/ui/SessionRow";
-import type { AuditLog, DemoUser } from "../../types/iam";
+import type { AuditLog, User } from "../../types/iam";
 import { AuditTable } from "./AuditTable";
 
 type AdminOverviewPageProps = {
-  users: DemoUser[];
+  users: User[];
   logs: AuditLog[];
 };
 

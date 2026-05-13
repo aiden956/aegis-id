@@ -2,9 +2,9 @@ import { InfoBlock } from "../../components/ui/InfoBlock";
 import { Page } from "../../components/ui/Page";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Panel } from "../../components/ui/Panel";
-import type { DemoUser } from "../../types/iam";
+import type { User } from "../../types/iam";
 
-export const ProfilePage = ({ user }: { user: DemoUser | null }) => (
+export const ProfilePage = ({ user }: { user: User | null }) => (
   <Page>
     <PageHeader
       eyebrow="Profile"
@@ -14,9 +14,9 @@ export const ProfilePage = ({ user }: { user: DemoUser | null }) => (
     <Panel title="User record">
       <div className="grid gap-4 md:grid-cols-2">
         <InfoBlock label="Name" value={user?.name ?? "AegisID User"} />
-        <InfoBlock label="Email" value={user?.email ?? "user@secureiam.test"} />
+        <InfoBlock label="Email" value={user?.email ?? "user@aegisid.test"} />
         <InfoBlock label="Role" value={user?.role ?? "USER"} />
-        <InfoBlock label="Last login" value={user?.lastLogin ?? "Today"} />
+        <InfoBlock label="Provider" value={user?.provider ?? "local"} />
       </div>
     </Panel>
   </Page>

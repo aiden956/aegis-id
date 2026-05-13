@@ -1,54 +1,111 @@
+import { useCallback, useEffect, useState } from "react";
 import { BrowserRouter } from "react-router";
-import { useMemo, useState } from "react";
 import { AppRoutes } from "./app/AppRoutes";
-import { auditLogs, demoUsers } from "./data/mockIam";
-import type { AuthStatus, DemoUser, Role } from "./types/iam";
+import { getAuditLogs, getAdminUsers, updateUserRole } from "./api/admin";
+import {
+  getCurrentUser,
+  login,
+  logout,
+  refreshSession,
+  register,
+} from "./api/auth";
+import type { AuditLog, AuthStatus, Role, User } from "./types/iam";
 
 const App = () => {
-  const [status, setStatus] = useState<AuthStatus>("anonymous");
-  const [currentUser, setCurrentUser] = useState<DemoUser | null>(null);
-  const [pendingUser, setPendingUser] = useState<DemoUser | null>(null);
-  const [users, setUsers] = useState(demoUsers);
+  const [status, setStatus] = useState<AuthStatus>("loading");
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
+  const [logs, setLogs] = useState<AuditLog[]>([]);
 
-  const auth = useMemo(
-    () => ({
-      login: (role: Role) => {
-        const selected = users.find((user) => user.role === role) ?? users[0];
+  const syncAdminData = useCallback(async (user: User | null) => {
+    if (!user || user.role !== "ADMIN") {
+      setUsers([]);
+      setLogs([]);
+      return;
+    }
 
-        if (selected.isTwoFactorEnabled) {
-          setPendingUser(selected);
-          setStatus("pending_2fa");
-          return "/verify-2fa";
-        }
+    const [adminUsers, auditLogs] = await Promise.all([
+      getAdminUsers(),
+      getAuditLogs(),
+    ]);
+    setUsers(adminUsers);
+    setLogs(auditLogs);
+  }, []);
 
-        setCurrentUser(selected);
-        setStatus("authenticated");
-        return selected.role === "ADMIN" ? "/admin" : "/dashboard";
-      },
-      verifyTwoFactor: () => {
-        if (!pendingUser) {
-          return "/login";
-        }
+  const bootSession = useCallback(async () => {
+    try {
+      const user = await getCurrentUser();
+      setCurrentUser(user);
+      setStatus("authenticated");
+      await syncAdminData(user);
+      return;
+    } catch {
+      // Continue to refresh fallback.
+    }
 
-        setCurrentUser(pendingUser);
-        setPendingUser(null);
-        setStatus("authenticated");
-        return pendingUser.role === "ADMIN" ? "/admin" : "/dashboard";
-      },
-      logout: () => {
-        setStatus("anonymous");
-        setCurrentUser(null);
-        setPendingUser(null);
-      },
-      updateRole: (userId: string, role: Role) => {
-        setUsers((existingUsers) =>
-          existingUsers.map((user) =>
-            user.id === userId ? { ...user, role } : user,
-          ),
-        );
-      },
-    }),
-    [pendingUser, users],
+    try {
+      const user = await refreshSession();
+      setCurrentUser(user);
+      setStatus("authenticated");
+      await syncAdminData(user);
+      return;
+    } catch {
+      setCurrentUser(null);
+      setStatus("anonymous");
+    }
+  }, [syncAdminData]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void bootSession();
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [bootSession]);
+
+  const handleLogin = useCallback(
+    async (email: string, password: string) => {
+      const user = await login(email, password);
+      setCurrentUser(user);
+      setStatus("authenticated");
+      await syncAdminData(user);
+      return user.role === "ADMIN" ? "/admin" : "/dashboard";
+    },
+    [syncAdminData],
+  );
+
+  const handleRegister = useCallback(
+    async (name: string, email: string, password: string) => {
+      const user = await register(name, email, password);
+      setCurrentUser(user);
+      setStatus("authenticated");
+      await syncAdminData(user);
+      return "/dashboard";
+    },
+    [syncAdminData],
+  );
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await logout();
+    } finally {
+      setStatus("anonymous");
+      setCurrentUser(null);
+      setUsers([]);
+      setLogs([]);
+    }
+  }, []);
+
+  const handleRoleChange = useCallback(
+    async (userId: string, role: Role) => {
+      const updatedUser = await updateUserRole(userId, role);
+      setUsers((existingUsers) =>
+        existingUsers.map((user) => (user.id === updatedUser.id ? updatedUser : user)),
+      );
+      setLogs(await getAuditLogs());
+    },
+    [],
   );
 
   return (
@@ -56,13 +113,12 @@ const App = () => {
       <AppRoutes
         status={status}
         currentUser={currentUser}
-        pendingUser={pendingUser}
         users={users}
-        logs={auditLogs}
-        onLogin={auth.login}
-        onVerifyTwoFactor={auth.verifyTwoFactor}
-        onLogout={auth.logout}
-        onRoleChange={auth.updateRole}
+        logs={logs}
+        onLogin={handleLogin}
+        onRegister={handleRegister}
+        onLogout={handleLogout}
+        onRoleChange={handleRoleChange}
       />
     </BrowserRouter>
   );

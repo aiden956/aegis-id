@@ -1,15 +1,16 @@
 export type Role = "USER" | "ADMIN";
 
-export type AuthStatus = "anonymous" | "pending_2fa" | "authenticated";
+export type AuthStatus = "loading" | "anonymous" | "authenticated";
 
-export type DemoUser = {
+export type User = {
   id: string;
   name: string;
   email: string;
   role: Role;
   isTwoFactorEnabled: boolean;
-  providers: string[];
-  lastLogin: string;
+  provider?: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type AuditLog = {

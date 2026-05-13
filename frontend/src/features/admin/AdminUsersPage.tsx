@@ -3,11 +3,11 @@ import { Page } from "../../components/ui/Page";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Panel } from "../../components/ui/Panel";
 import { StatusPill } from "../../components/ui/StatusPill";
-import type { DemoUser, Role } from "../../types/iam";
+import type { Role, User } from "../../types/iam";
 
 type AdminUsersPageProps = {
-  users: DemoUser[];
-  onRoleChange: (userId: string, role: Role) => void;
+  users: User[];
+  onRoleChange: (userId: string, role: Role) => Promise<void>;
 };
 
 export const AdminUsersPage = ({ users, onRoleChange }: AdminUsersPageProps) => (
@@ -40,7 +40,7 @@ export const AdminUsersPage = ({ users, onRoleChange }: AdminUsersPageProps) => 
               <th>Providers</th>
               <th>2FA</th>
               <th>Role</th>
-              <th>Last login</th>
+              <th>Created</th>
             </tr>
           </thead>
           <tbody>
@@ -50,7 +50,7 @@ export const AdminUsersPage = ({ users, onRoleChange }: AdminUsersPageProps) => 
                   <p className="font-semibold text-slate-950">{user.name}</p>
                   <p className="text-sm text-slate-500">{user.email}</p>
                 </td>
-                <td>{user.providers.join(", ")}</td>
+                <td>{(user.provider ?? "local").toUpperCase()}</td>
                 <td>
                   <StatusPill status={user.isTwoFactorEnabled ? "success" : "warning"}>
                     {user.isTwoFactorEnabled ? "Enabled" : "Disabled"}
@@ -60,15 +60,19 @@ export const AdminUsersPage = ({ users, onRoleChange }: AdminUsersPageProps) => 
                   <select
                     className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold"
                     value={user.role}
-                    onChange={(event) =>
-                      onRoleChange(user.id, event.target.value as Role)
-                    }
+                    onChange={async (event) => {
+                      await onRoleChange(user.id, event.target.value as Role);
+                    }}
                   >
                     <option value="USER">USER</option>
                     <option value="ADMIN">ADMIN</option>
                   </select>
                 </td>
-                <td>{user.lastLogin}</td>
+                <td>
+                  {user.createdAt
+                    ? new Date(user.createdAt).toLocaleDateString()
+                    : "-"}
+                </td>
               </tr>
             ))}
           </tbody>

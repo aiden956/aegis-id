@@ -4,9 +4,9 @@ import { PageHeader } from "../../components/ui/PageHeader";
 import { Panel } from "../../components/ui/Panel";
 import { SessionRow } from "../../components/ui/SessionRow";
 import { StatusPill } from "../../components/ui/StatusPill";
-import type { DemoUser } from "../../types/iam";
+import type { User } from "../../types/iam";
 
-export const SecurityPage = ({ user }: { user: DemoUser | null }) => (
+export const SecurityPage = ({ user }: { user: User | null }) => (
   <Page>
     <PageHeader
       eyebrow="Security"
@@ -43,15 +43,15 @@ export const SecurityPage = ({ user }: { user: DemoUser | null }) => (
 
       <Panel title="Connected login providers">
         <div className="space-y-3">
-          {["Password", "Google", "GitHub"].map((provider) => {
-            const connected = user?.providers.includes(provider);
+          {["local", "google", "github"].map((provider) => {
+            const connected = user?.provider === provider;
             return (
               <div
                 className="flex items-center justify-between rounded-lg border border-slate-200 p-4"
                 key={provider}
               >
                 <div>
-                  <p className="font-semibold">{provider}</p>
+                  <p className="font-semibold">{provider.toUpperCase()}</p>
                   <p className="text-sm text-slate-600">
                     {connected ? "Connected to this account" : "Available to connect"}
                   </p>

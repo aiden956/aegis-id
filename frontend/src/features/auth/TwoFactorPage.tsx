@@ -1,11 +1,11 @@
 import { BadgeCheck, Smartphone } from "lucide-react";
 import { Link, Navigate, useNavigate } from "react-router";
 import { Input } from "../../components/ui/Input";
-import type { DemoUser } from "../../types/iam";
+import type { User } from "../../types/iam";
 import { AuthFrame } from "./AuthFrame";
 
 type TwoFactorPageProps = {
-  pendingUser: DemoUser | null;
+  pendingUser: User | null;
   onVerify: () => string;
 };
 

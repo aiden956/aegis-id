@@ -2,11 +2,11 @@ import { Activity, BarChart3, LayoutDashboard, LogOut, Settings, Shield, ShieldC
 import type { ReactNode } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router";
 import { RoleBadge } from "../components/ui/RoleBadge";
-import type { DemoUser } from "../types/iam";
+import type { User } from "../types/iam";
 
 type AppShellProps = {
-  user: DemoUser | null;
-  onLogout: () => void;
+  user: User | null;
+  onLogout: () => Promise<void>;
 };
 
 export const AppShell = ({ user, onLogout }: AppShellProps) => {
@@ -69,8 +69,8 @@ export const AppShell = ({ user, onLogout }: AppShellProps) => {
                 className="icon-button"
                 type="button"
                 aria-label="Logout"
-                onClick={() => {
-                  onLogout();
+                onClick={async () => {
+                  await onLogout();
                   navigate("/login");
                 }}
               >
@@ -116,7 +116,7 @@ const SidebarLink = ({ icon, to, end = false, children }: SidebarLinkProps) => (
   </NavLink>
 );
 
-const MobileNav = ({ user }: { user: DemoUser | null }) => (
+const MobileNav = ({ user }: { user: User | null }) => (
   <div className="mb-5 flex gap-2 overflow-x-auto lg:hidden">
     {[
       ["/dashboard", "Dashboard"],

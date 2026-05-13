@@ -11,38 +11,42 @@ import { UnauthorizedPage } from "../features/auth/UnauthorizedPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { ProfilePage } from "../features/profile/ProfilePage";
 import { SecurityPage } from "../features/security/SecurityPage";
-import type { AuditLog, AuthStatus, DemoUser, Role } from "../types/iam";
+import type { AuditLog, AuthStatus, Role, User } from "../types/iam";
 
 type AppRoutesProps = {
   status: AuthStatus;
-  currentUser: DemoUser | null;
-  pendingUser: DemoUser | null;
-  users: DemoUser[];
+  currentUser: User | null;
+  users: User[];
   logs: AuditLog[];
-  onLogin: (role: Role) => string;
-  onVerifyTwoFactor: () => string;
-  onLogout: () => void;
-  onRoleChange: (userId: string, role: Role) => void;
+  onLogin: (email: string, password: string) => Promise<string>;
+  onRegister: (name: string, email: string, password: string) => Promise<string>;
+  onLogout: () => Promise<void>;
+  onRoleChange: (userId: string, role: Role) => Promise<void>;
 };
 
 export const AppRoutes = ({
   status,
   currentUser,
-  pendingUser,
   users,
   logs,
   onLogin,
-  onVerifyTwoFactor,
+  onRegister,
   onLogout,
   onRoleChange,
 }: AppRoutesProps) => (
   <Routes>
     <Route path="/login" element={<LoginPage onLogin={onLogin} status={status} />} />
-    <Route path="/register" element={<RegisterPage />} />
     <Route
-      path="/verify-2fa"
-      element={<TwoFactorPage pendingUser={pendingUser} onVerify={onVerifyTwoFactor} />}
+      path="/register"
+      element={
+        status === "authenticated" ? (
+          <Navigate to="/dashboard" replace />
+        ) : (
+          <RegisterPage onRegister={onRegister} />
+        )
+      }
     />
+    <Route path="/verify-2fa" element={<TwoFactorPage pendingUser={null} onVerify={() => "/login"} />} />
     <Route
       path="/unauthorized"
       element={<UnauthorizedPage user={currentUser} onLogout={onLogout} />}
@@ -94,8 +98,8 @@ const ProtectedRoute = ({
   status: AuthStatus;
   children: ReactNode;
 }) => {
-  if (status === "pending_2fa") {
-    return <Navigate to="/verify-2fa" replace />;
+  if (status === "loading") {
+    return <main className="p-6 text-sm text-slate-600">Loading session...</main>;
   }
 
   if (status !== "authenticated") {
@@ -110,7 +114,7 @@ const RequireRole = ({
   role,
   children,
 }: {
-  user: DemoUser | null;
+  user: User | null;
   role: Role;
   children: ReactNode;
 }) => {

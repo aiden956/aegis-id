@@ -1,12 +1,12 @@
 import { BadgeCheck, CheckCircle2, Clock3, KeyRound, ShieldCheck, Smartphone } from "lucide-react";
-import { permissions } from "../../data/mockIam";
+import { permissions } from "../../data/permissions";
 import { MetricCard } from "../../components/ui/MetricCard";
 import { Page } from "../../components/ui/Page";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Panel } from "../../components/ui/Panel";
-import type { DemoUser } from "../../types/iam";
+import type { User } from "../../types/iam";
 
-export const DashboardPage = ({ user }: { user: DemoUser | null }) => (
+export const DashboardPage = ({ user }: { user: User | null }) => (
   <Page>
     <PageHeader
       eyebrow="Dashboard"
