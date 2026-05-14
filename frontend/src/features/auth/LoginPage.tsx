@@ -1,10 +1,14 @@
-import { useState, type FormEvent } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useEffect, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
+import { toast } from "sonner";
 import { startOAuthLogin } from "../../api/auth";
 import githubIcon from "../../assets/brands/github.svg";
 import googleIcon from "../../assets/brands/google.svg";
 import { Input } from "../../components/ui/Input";
 import type { AuthStatus } from "../../types/iam";
+import { loginFormSchema, type LoginFormValues } from "../../validation/forms";
 import { AuthFrame } from "./AuthFrame";
 
 type LoginPageProps = {
@@ -15,13 +19,21 @@ type LoginPageProps = {
 
 export const LoginPage = ({ onLogin, onLoginWithPasskey, status }: LoginPageProps) => {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [isPasskeySubmitting, setIsPasskeySubmitting] = useState(false);
   const oauthError = searchParams.get("error");
+  const {
+    control,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+    getValues,
+  } = useForm<LoginFormValues>({
+    resolver: zodResolver(loginFormSchema),
+    defaultValues: {
+      email: "",
+      password: "",
+    },
+  });
 
   const toFriendlyError = (value: unknown) => {
     const rawMessage =
@@ -55,29 +67,34 @@ export const LoginPage = ({ onLogin, onLoginWithPasskey, status }: LoginPageProp
     return "OAuth login failed. Please try again.";
   })();
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setError(null);
-    setIsSubmitting(true);
+  useEffect(() => {
+    if (!oauthErrorMessage) {
+      return;
+    }
 
+    toast.error(oauthErrorMessage);
+    setSearchParams((currentParams) => {
+      currentParams.delete("error");
+      return currentParams;
+    });
+  }, [oauthErrorMessage, setSearchParams]);
+
+  const handleLoginSubmit = async ({ email, password }: LoginFormValues) => {
     try {
       const destination = await onLogin(email, password);
       navigate(destination);
     } catch (submitError) {
-      setError(toFriendlyError(submitError));
-    } finally {
-      setIsSubmitting(false);
+      toast.error(toFriendlyError(submitError));
     }
   };
 
   const handlePasskeyLogin = async () => {
-    setError(null);
     setIsPasskeySubmitting(true);
     try {
-      const destination = await onLoginWithPasskey(email);
+      const destination = await onLoginWithPasskey(getValues("email").trim());
       navigate(destination);
     } catch (passkeyError) {
-      setError(toFriendlyError(passkeyError));
+      toast.error(toFriendlyError(passkeyError));
     } finally {
       setIsPasskeySubmitting(false);
     }
@@ -101,28 +118,41 @@ export const LoginPage = ({ onLogin, onLoginWithPasskey, status }: LoginPageProp
       title="Sign in to AegisID"
       subtitle="Manage access, account security, and privileged operations from a unified identity console."
     >
-      <form className="space-y-4" onSubmit={handleSubmit}>
-        <Input
-          autoComplete="email"
-          label="Email"
+      <form className="space-y-4" onSubmit={handleSubmit(handleLoginSubmit)} noValidate>
+        <Controller
+          control={control}
           name="email"
-          onChange={setEmail}
-          placeholder="your@email.com"
-          type="email"
-          value={email}
+          render={({ field }) => (
+            <Input
+              autoComplete="email"
+              label="Email"
+              name="email"
+              placeholder="your@email.com"
+              type="email"
+              value={field.value}
+              onChange={field.onChange}
+              onBlur={field.onBlur}
+              error={errors.email?.message}
+            />
+          )}
         />
-        <Input
-          autoComplete="current-password"
-          label="Password"
+        <Controller
+          control={control}
           name="password"
-          onChange={setPassword}
-          placeholder="••••••••"
-          type="password"
-          value={password}
+          render={({ field }) => (
+            <Input
+              autoComplete="current-password"
+              label="Password"
+              name="password"
+              placeholder="••••••••"
+              type="password"
+              value={field.value}
+              onChange={field.onChange}
+              onBlur={field.onBlur}
+              error={errors.password?.message}
+            />
+          )}
         />
-        {error ? (
-          <p className="text-sm font-medium text-red-700">{error}</p>
-        ) : null}
         <button
           className="primary-button w-full"
           disabled={isSubmitting}
@@ -158,9 +188,6 @@ export const LoginPage = ({ onLogin, onLoginWithPasskey, status }: LoginPageProp
           GitHub OAuth
         </button>
       </div>
-      {oauthErrorMessage ? (
-        <p className="text-sm font-medium text-red-700">{oauthErrorMessage}</p>
-      ) : null}
 
       <p className="text-center text-sm text-slate-600">
         Don't have an account?{" "}

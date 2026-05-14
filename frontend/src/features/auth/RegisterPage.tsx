@@ -1,6 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm } from "react-hook-form";
 import { Link, useNavigate } from "react-router";
+import { toast } from "sonner";
 import { Input } from "../../components/ui/Input";
+import { registerFormSchema, type RegisterFormValues } from "../../validation/forms";
 import { AuthFrame } from "./AuthFrame";
 
 type RegisterPageProps = {
@@ -13,31 +16,30 @@ type RegisterPageProps = {
 
 export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
   const navigate = useNavigate();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const {
+    control,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<RegisterFormValues>({
+    resolver: zodResolver(registerFormSchema),
+    defaultValues: {
+      name: "",
+      email: "",
+      password: "",
+    },
+  });
 
-  const handleRegister = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setError(null);
-    setSuccess(null);
-    setIsSubmitting(true);
-
+  const handleRegister = async ({ name, email, password }: RegisterFormValues) => {
     try {
       const destination = await onRegister(name, email, password);
-      setSuccess("Account created. Redirecting to your dashboard...");
+      toast.success("Account created. Redirecting to your dashboard...");
       navigate(destination);
     } catch (registerError) {
-      setError(
+      toast.error(
         registerError instanceof Error
           ? registerError.message
           : "Unable to register account",
       );
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
@@ -47,40 +49,58 @@ export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
       title="Create your AegisID account"
       subtitle="Start with secure credentials and configure protection controls after sign-in."
     >
-      <form className="space-y-4" onSubmit={handleRegister}>
-        <Input
-          autoComplete="name"
-          label="Full name"
+      <form className="space-y-4" onSubmit={handleSubmit(handleRegister)} noValidate>
+        <Controller
+          control={control}
           name="name"
-          onChange={setName}
-          placeholder="Your full name"
-          type="text"
-          value={name}
+          render={({ field }) => (
+            <Input
+              autoComplete="name"
+              label="Full name"
+              name="name"
+              onChange={field.onChange}
+              onBlur={field.onBlur}
+              placeholder="Your full name"
+              type="text"
+              value={field.value}
+              error={errors.name?.message}
+            />
+          )}
         />
-        <Input
-          autoComplete="email"
-          label="Email"
+        <Controller
+          control={control}
           name="email"
-          onChange={setEmail}
-          placeholder="your@email.com"
-          type="email"
-          value={email}
+          render={({ field }) => (
+            <Input
+              autoComplete="email"
+              label="Email"
+              name="email"
+              onChange={field.onChange}
+              onBlur={field.onBlur}
+              placeholder="your@email.com"
+              type="email"
+              value={field.value}
+              error={errors.email?.message}
+            />
+          )}
         />
-        <Input
-          autoComplete="new-password"
-          label="Password"
+        <Controller
+          control={control}
           name="password"
-          onChange={setPassword}
-          placeholder="••••••••"
-          type="password"
-          value={password}
+          render={({ field }) => (
+            <Input
+              autoComplete="new-password"
+              label="Password"
+              name="password"
+              onChange={field.onChange}
+              onBlur={field.onBlur}
+              placeholder="••••••••"
+              type="password"
+              value={field.value}
+              error={errors.password?.message}
+            />
+          )}
         />
-        {error ? (
-          <p className="text-sm font-medium text-red-700">{error}</p>
-        ) : null}
-        {success ? (
-          <p className="text-sm font-medium text-green-700">{success}</p>
-        ) : null}
         <button
           className="primary-button w-full"
           disabled={isSubmitting}

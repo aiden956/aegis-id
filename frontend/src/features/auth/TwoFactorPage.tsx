@@ -1,8 +1,12 @@
+import { zodResolver } from "@hookform/resolvers/zod";
 import { BadgeCheck, Smartphone } from "lucide-react";
 import { useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 import { Navigate, useNavigate } from "react-router";
+import { toast } from "sonner";
 import { Input } from "../../components/ui/Input";
 import type { User } from "../../types/iam";
+import { twoFactorFormSchema, type TwoFactorFormValues } from "../../validation/forms";
 import { AuthFrame } from "./AuthFrame";
 
 type TwoFactorPageProps = {
@@ -19,19 +23,25 @@ export const TwoFactorPage = ({
   onCancelChallenge,
 }: TwoFactorPageProps) => {
   const navigate = useNavigate();
-  const [code, setCode] = useState("");
   const [method, setMethod] = useState<"totp" | "recovery">("totp");
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const {
+    control,
+    handleSubmit,
+    setValue,
+    formState: { errors, isSubmitting },
+  } = useForm<TwoFactorFormValues>({
+    resolver: zodResolver(twoFactorFormSchema),
+    defaultValues: {
+      code: "",
+    },
+  });
 
   if (!pendingUser) {
     return <Navigate to="/login" replace />;
   }
 
-  const handleVerify = async () => {
-    setError(null);
-    setIsSubmitting(true);
+  const handleVerify = async ({ code }: TwoFactorFormValues) => {
     try {
       const destination =
         method === "totp"
@@ -39,24 +49,21 @@ export const TwoFactorPage = ({
           : await onVerifyRecoveryCode(code);
       navigate(destination);
     } catch (verifyError) {
-      setError(
+      toast.error(
         verifyError instanceof Error
           ? verifyError.message
           : "Unable to verify authenticator code",
       );
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
   const handleUseAnotherAccount = async () => {
-    setError(null);
     setIsCancelling(true);
     try {
       await onCancelChallenge();
       navigate("/login", { replace: true });
     } catch (cancelError) {
-      setError(
+      toast.error(
         cancelError instanceof Error
           ? cancelError.message
           : "Unable to return to sign in. Please try again.",
@@ -81,21 +88,28 @@ export const TwoFactorPage = ({
           </p>
         </div>
       </div>
-      <Input
-        autoComplete={method === "totp" ? "one-time-code" : "off"}
-        label={method === "totp" ? "6-digit code" : "Recovery code"}
-        name={method === "totp" ? "totp_code" : "recovery_code"}
-        onChange={setCode}
-        placeholder={method === "totp" ? "123456" : "ABCD-1234-EFGH"}
-        type="text"
-        value={code}
+      <Controller
+        control={control}
+        name="code"
+        render={({ field }) => (
+          <Input
+            autoComplete={method === "totp" ? "one-time-code" : "off"}
+            label={method === "totp" ? "6-digit code" : "Recovery code"}
+            name={method === "totp" ? "totp_code" : "recovery_code"}
+            onChange={field.onChange}
+            onBlur={field.onBlur}
+            placeholder={method === "totp" ? "123456" : "ABCD-1234-EFGH"}
+            type="text"
+            value={field.value}
+            error={errors.code?.message}
+          />
+        )}
       />
       <button
         className="text-left text-sm font-semibold text-blue-700"
         type="button"
         onClick={() => {
-          setError(null);
-          setCode("");
+          setValue("code", "");
           setMethod((existingMethod) =>
             existingMethod === "totp" ? "recovery" : "totp",
           );
@@ -103,12 +117,11 @@ export const TwoFactorPage = ({
       >
         {method === "totp" ? "Use recovery code instead" : "Use authenticator code instead"}
       </button>
-      {error ? <p className="text-sm font-medium text-red-700">{error}</p> : null}
       <button
         className="primary-button w-full"
         type="button"
         disabled={isSubmitting}
-        onClick={handleVerify}
+        onClick={handleSubmit(handleVerify)}
       >
         <BadgeCheck size={18} />
         {isSubmitting ? "Verifying..." : "Verify and continue"}

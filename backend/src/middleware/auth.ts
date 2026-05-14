@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { Role } from "@prisma/client";
+import { prisma } from "../prisma.js";
 import { cookieNames, verifyAccessToken } from "../utils/tokens.js";
 
 export const requireAuth = (
@@ -27,15 +28,21 @@ export const requireAuth = (
 };
 
 export const requireRole = (role: Role) => {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     if (!req.authUser) {
       return res.status(401).json({ message: "Authentication required" });
     }
 
-    if (req.authUser.role !== role) {
+    const user = await prisma.user.findUnique({
+      where: { id: req.authUser.id },
+      select: { role: true },
+    });
+
+    if (!user || user.role !== role) {
       return res.status(403).json({ message: "Insufficient permissions" });
     }
 
+    req.authUser.role = user.role;
     return next();
   };
 };

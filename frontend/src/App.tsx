@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { BrowserRouter } from "react-router";
+import { toast } from "sonner";
 import { getAuditLogs, getAdminUsers, updateUserRole } from "./api/admin";
 import {
   beginTwoFactorSetup,
@@ -198,13 +199,38 @@ const App = () => {
     }
   }, []);
 
-  const handleRoleChange = useCallback(async (userId: string, role: Role) => {
-    const updatedUser = await updateUserRole(userId, role);
-    setUsers((existingUsers) =>
-      existingUsers.map((user) => (user.id === updatedUser.id ? updatedUser : user)),
-    );
-    setLogs(await getAuditLogs());
-  }, []);
+  const handleRoleChange = useCallback(
+    async (userId: string, role: Role) => {
+      try {
+        const updatedUser = await updateUserRole(userId, role);
+        setUsers((existingUsers) =>
+          existingUsers.map((user) => (user.id === updatedUser.id ? updatedUser : user)),
+        );
+
+        if (currentUser?.id === updatedUser.id) {
+          setCurrentUser((existingUser) =>
+            existingUser ? { ...existingUser, role: updatedUser.role } : existingUser,
+          );
+          if (updatedUser.role !== "ADMIN") {
+            setUsers([]);
+            setLogs([]);
+            toast.info("Your role was changed to USER. Admin access has been removed.");
+            window.location.assign("/dashboard");
+            return;
+          }
+        }
+
+        setLogs(await getAuditLogs());
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Unable to update user role",
+        );
+      }
+    },
+    [currentUser],
+  );
 
   const handleEnableTwoFactor = useCallback(async (code: string) => {
     const result = await enableTwoFactor(code);

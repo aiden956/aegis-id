@@ -58,6 +58,23 @@ usersRoutes.patch(
         return res.status(404).json({ message: "User not found" });
       }
 
+      const isSelfDemotion =
+        req.authUser!.id === existingUser.id && parsed.data.role === Role.USER;
+      if (isSelfDemotion) {
+        const otherAdminCount = await prisma.user.count({
+          where: {
+            role: Role.ADMIN,
+            id: { not: existingUser.id },
+          },
+        });
+
+        if (otherAdminCount === 0) {
+          return res
+            .status(400)
+            .json({ message: "At least one admin account must remain." });
+        }
+      }
+
       const updatedUser = await prisma.user.update({
         where: { id: existingUser.id },
         data: { role: parsed.data.role },

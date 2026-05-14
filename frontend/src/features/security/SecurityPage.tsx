@@ -1,3 +1,4 @@
+import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Fingerprint,
   KeyRound,
@@ -7,9 +8,10 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Controller, useController, useForm } from "react-hook-form";
 import { useSearchParams } from "react-router";
+import { toast } from "sonner";
 import type {
-  RecoveryCodeSecondFactorMethod,
   RegenerateRecoveryCodesPayload,
 } from "../../api/auth";
 import { Page } from "../../components/ui/Page";
@@ -18,6 +20,15 @@ import { Panel } from "../../components/ui/Panel";
 import { SessionRow } from "../../components/ui/SessionRow";
 import { StatusPill } from "../../components/ui/StatusPill";
 import type { User } from "../../types/iam";
+import {
+  disableTwoFactorSchema,
+  enableTwoFactorSchema,
+  recoveryRegenerationBaseSchema,
+  recoveryRegenerationLocalSchema,
+  type DisableTwoFactorValues,
+  type EnableTwoFactorValues,
+  type RecoveryRegenerationFormValues,
+} from "../../validation/forms";
 
 type SecurityPageProps = {
   user: User | null;
@@ -39,16 +50,18 @@ type SecurityPageProps = {
   onRegisterPasskey: () => Promise<void>;
 };
 
-type RegenerationForm = {
-  password: string;
-  secondFactorMethod: RecoveryCodeSecondFactorMethod;
-  secondFactorCode: string;
-};
+const toFriendlyToastError = (value: unknown) => {
+  const rawMessage = value instanceof Error ? value.message : "Request failed";
+  const normalized = rawMessage.toLowerCase();
 
-const initialRegenerationForm: RegenerationForm = {
-  password: "",
-  secondFactorMethod: "totp",
-  secondFactorCode: "",
+  if (normalized.includes("timed out") || normalized.includes("not allowed")) {
+    return "Passkey setup was canceled or timed out. Please try again and approve the passkey prompt.";
+  }
+  if (normalized.includes("not supported")) {
+    return "This browser or device does not support passkey setup.";
+  }
+
+  return rawMessage;
 };
 
 export const SecurityPage = ({
@@ -68,8 +81,6 @@ export const SecurityPage = ({
     qrCodeDataUrl: string;
     manualEntryKey: string;
   } | null>(null);
-  const [code, setCode] = useState("");
-  const [disableCode, setDisableCode] = useState("");
   const [localRecoveryStatus, setLocalRecoveryStatus] = useState<{
     total: number;
     remaining: number;
@@ -79,12 +90,25 @@ export const SecurityPage = ({
   >(null);
   const [hasConfirmedSavedCodes, setHasConfirmedSavedCodes] = useState(false);
   const [isRegenerationOpen, setIsRegenerationOpen] = useState(false);
-  const [regenerationForm, setRegenerationForm] = useState<RegenerationForm>(
-    initialRegenerationForm,
-  );
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const {
+    control: enableControl,
+    handleSubmit: handleEnableSubmit,
+    reset: resetEnableForm,
+    formState: { errors: enableErrors },
+  } = useForm<EnableTwoFactorValues>({
+    resolver: zodResolver(enableTwoFactorSchema),
+    defaultValues: { code: "" },
+  });
+  const {
+    control: disableControl,
+    handleSubmit: handleDisableSubmit,
+    reset: resetDisableForm,
+    formState: { errors: disableErrors },
+  } = useForm<DisableTwoFactorValues>({
+    resolver: zodResolver(disableTwoFactorSchema),
+    defaultValues: { code: "" },
+  });
 
   const displayedRecoveryStatus = recoveryCodeStatus ?? localRecoveryStatus;
   const isLowOnRecoveryCodes =
@@ -131,12 +155,12 @@ export const SecurityPage = ({
         if (codes) {
           setVisibleRecoveryCodes(codes);
           setHasConfirmedSavedCodes(false);
-          setMessage("Recovery codes regenerated. Save the new set now.");
+          toast.success("Recovery codes regenerated. Save the new set now.");
         }
       })
       .catch((consumeError) => {
         if (isMounted) {
-          setError(
+          toast.error(
             consumeError instanceof Error
               ? consumeError.message
               : "Unable to load regenerated recovery codes",
@@ -164,9 +188,7 @@ export const SecurityPage = ({
     }
 
     window.queueMicrotask(() => {
-      setError(
-        "OAuth re-verification failed. Try generating recovery codes again.",
-      );
+      toast.error("OAuth re-verification failed. Try generating recovery codes again.");
     });
     setSearchParams((currentParams) => {
       currentParams.delete("recoveryError");
@@ -175,15 +197,11 @@ export const SecurityPage = ({
   }, [searchParams, setSearchParams]);
 
   const runWithStatus = async (task: () => Promise<void>) => {
-    setError(null);
-    setMessage(null);
     setIsSubmitting(true);
     try {
       await task();
     } catch (taskError) {
-      setError(
-        taskError instanceof Error ? taskError.message : "Request failed",
-      );
+      toast.error(toFriendlyToastError(taskError));
     } finally {
       setIsSubmitting(false);
     }
@@ -193,48 +211,59 @@ export const SecurityPage = ({
     await runWithStatus(async () => {
       const result = await onStartSetup();
       setSetupData(result);
-      setMessage("Scan the QR code and enter your 6-digit code to enable.");
+      toast.success("Scan the QR code and enter your 6-digit code to enable.");
     });
   };
 
-  const handleEnable = async () => {
+  const handleEnable = async ({ code }: EnableTwoFactorValues) => {
     await runWithStatus(async () => {
       const generatedRecoveryCodes = await onEnable(code);
       setSetupData(null);
-      setCode("");
+      resetEnableForm();
       setVisibleRecoveryCodes(generatedRecoveryCodes);
       setHasConfirmedSavedCodes(false);
       setLocalRecoveryStatus({
         total: generatedRecoveryCodes.length,
         remaining: generatedRecoveryCodes.length,
       });
-      setMessage("Authenticator app enabled. Save your recovery codes now.");
+      toast.success("Authenticator app enabled. Save your recovery codes now.");
     });
   };
 
-  const handleDisable = async () => {
+  const handleDisable = async ({ code }: DisableTwoFactorValues) => {
     await runWithStatus(async () => {
-      await onDisable(disableCode);
-      setDisableCode("");
+      await onDisable(code);
+      resetDisableForm();
       setVisibleRecoveryCodes(null);
       setLocalRecoveryStatus(null);
-      setMessage("Two-factor authentication disabled.");
+      toast.success("Two-factor authentication disabled.");
     });
   };
 
   const handleRegisterPasskey = async () => {
     await runWithStatus(async () => {
       await onRegisterPasskey();
-      setMessage("Passkey registered successfully.");
+      toast.success("Passkey registered successfully.");
     });
   };
 
-  const handleRegenerateRecoveryCodes = async () => {
+  const handleRegenerateRecoveryCodes = async (
+    values: RecoveryRegenerationFormValues,
+    isOAuthProvider: boolean,
+  ) => {
     await runWithStatus(async () => {
+      if (isOAuthProvider) {
+        await onStartOAuthRecoveryCodeRegeneration({
+          secondFactorMethod: values.secondFactorMethod,
+          secondFactorCode: values.secondFactorCode,
+        });
+        return;
+      }
+
       const generatedRecoveryCodes = await onRegenerateRecoveryCodes({
-        password: regenerationForm.password,
-        secondFactorMethod: regenerationForm.secondFactorMethod,
-        secondFactorCode: regenerationForm.secondFactorCode,
+        password: values.password,
+        secondFactorMethod: values.secondFactorMethod,
+        secondFactorCode: values.secondFactorCode,
       });
       setVisibleRecoveryCodes(generatedRecoveryCodes);
       setHasConfirmedSavedCodes(false);
@@ -242,25 +271,15 @@ export const SecurityPage = ({
         total: generatedRecoveryCodes.length,
         remaining: generatedRecoveryCodes.length,
       });
-      setRegenerationForm(initialRegenerationForm);
       setIsRegenerationOpen(false);
-      setMessage("Recovery codes regenerated. Save the new set now.");
-    });
-  };
-
-  const handleOAuthRegeneration = async () => {
-    await runWithStatus(async () => {
-      await onStartOAuthRecoveryCodeRegeneration({
-        secondFactorMethod: regenerationForm.secondFactorMethod,
-        secondFactorCode: regenerationForm.secondFactorCode,
-      });
+      toast.success("Recovery codes regenerated. Save the new set now.");
     });
   };
 
   const handleSavedRecoveryCodes = () => {
     setVisibleRecoveryCodes(null);
     setHasConfirmedSavedCodes(false);
-    setMessage("Recovery codes saved confirmation recorded.");
+    toast.success("Recovery codes saved confirmation recorded.");
   };
 
   return (
@@ -297,17 +316,35 @@ export const SecurityPage = ({
                 Manual key:{" "}
                 <span className="font-mono">{setupData.manualEntryKey}</span>
               </p>
-              <input
-                className="mt-3 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500"
-                value={code}
-                placeholder="Enter 6-digit code"
-                onChange={(event) => setCode(event.target.value)}
+              <Controller
+                control={enableControl}
+                name="code"
+                render={({ field }) => (
+                  <>
+                    <input
+                      className={[
+                        "mt-3 h-10 w-full rounded-lg bg-white px-3 text-sm outline-none",
+                        enableErrors.code
+                          ? "border border-red-300 focus:border-red-500"
+                          : "border border-slate-200 focus:border-blue-500",
+                      ].join(" ")}
+                      value={field.value}
+                      placeholder="Enter 6-digit code"
+                      onChange={(event) => field.onChange(event.target.value)}
+                    />
+                    {enableErrors.code ? (
+                      <p className="mt-1 text-xs font-medium text-red-600">
+                        {enableErrors.code.message}
+                      </p>
+                    ) : null}
+                  </>
+                )}
               />
               <button
                 className="primary-button mt-3 w-full"
                 type="button"
                 disabled={isSubmitting}
-                onClick={handleEnable}
+                onClick={handleEnableSubmit(handleEnable)}
               >
                 <Smartphone size={18} />
                 {isSubmitting ? "Enabling..." : "Enable 2FA"}
@@ -329,9 +366,6 @@ export const SecurityPage = ({
                 type="button"
                 disabled={isSubmitting}
                 onClick={() => {
-                  setError(null);
-                  setMessage(null);
-                  setRegenerationForm(initialRegenerationForm);
                   setIsRegenerationOpen(true);
                 }}
               >
@@ -386,27 +420,39 @@ export const SecurityPage = ({
           )}
           {user?.isTwoFactorEnabled ? (
             <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4">
-              <input
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500"
-                value={disableCode}
-                placeholder="Authenticator code to disable"
-                onChange={(event) => setDisableCode(event.target.value)}
+              <Controller
+                control={disableControl}
+                name="code"
+                render={({ field }) => (
+                  <>
+                    <input
+                      className={[
+                        "h-10 w-full rounded-lg bg-white px-3 text-sm outline-none",
+                        disableErrors.code
+                          ? "border border-red-300 focus:border-red-500"
+                          : "border border-slate-200 focus:border-blue-500",
+                      ].join(" ")}
+                      value={field.value}
+                      placeholder="Authenticator code to disable"
+                      onChange={(event) => field.onChange(event.target.value)}
+                    />
+                    {disableErrors.code ? (
+                      <p className="mt-1 text-xs font-medium text-red-600">
+                        {disableErrors.code.message}
+                      </p>
+                    ) : null}
+                  </>
+                )}
               />
               <button
                 className="secondary-button mt-3 w-full"
                 type="button"
                 disabled={isSubmitting}
-                onClick={handleDisable}
+                onClick={handleDisableSubmit(handleDisable)}
               >
                 Disable 2FA
               </button>
             </div>
-          ) : null}
-          {error ? (
-            <p className="mt-3 text-sm font-medium text-red-700">{error}</p>
-          ) : null}
-          {message ? (
-            <p className="mt-3 text-sm font-medium text-green-700">{message}</p>
           ) : null}
         </Panel>
 
@@ -488,17 +534,11 @@ export const SecurityPage = ({
 
       {isRegenerationOpen ? (
         <RecoveryCodeRegenerationModal
-          form={regenerationForm}
           isOAuthProvider={usesOAuthProvider}
           isSubmitting={isSubmitting}
           provider={user?.provider}
-          onChange={setRegenerationForm}
-          onClose={() => {
-            setIsRegenerationOpen(false);
-            setRegenerationForm(initialRegenerationForm);
-          }}
+          onClose={() => setIsRegenerationOpen(false)}
           onGenerate={handleRegenerateRecoveryCodes}
-          onOAuthGenerate={handleOAuthRegeneration}
         />
       ) : null}
 
@@ -515,141 +555,173 @@ export const SecurityPage = ({
 };
 
 const RecoveryCodeRegenerationModal = ({
-  form,
   isOAuthProvider,
   isSubmitting,
   provider,
-  onChange,
   onClose,
   onGenerate,
-  onOAuthGenerate,
 }: {
-  form: RegenerationForm;
   isOAuthProvider: boolean;
   isSubmitting: boolean;
   provider?: string;
-  onChange: (form: RegenerationForm) => void;
   onClose: () => void;
-  onGenerate: () => void;
-  onOAuthGenerate: () => void;
-}) => (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
-    <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-lg font-semibold text-slate-950">
-            Generate new recovery codes
-          </p>
-          <p className="mt-1 text-sm leading-6 text-slate-600">
-            Your old unused recovery codes will be disabled immediately after a
-            new set is created.
+  onGenerate: (
+    values: RecoveryRegenerationFormValues,
+    isOAuthProvider: boolean,
+  ) => Promise<void>;
+}) => {
+  const {
+    control,
+    handleSubmit,
+    setValue,
+    formState: { errors },
+  } = useForm<RecoveryRegenerationFormValues>({
+    resolver: zodResolver(
+      isOAuthProvider ? recoveryRegenerationBaseSchema : recoveryRegenerationLocalSchema,
+    ),
+    defaultValues: {
+      secondFactorMethod: "totp",
+      secondFactorCode: "",
+      ...(isOAuthProvider ? {} : { password: "" }),
+    },
+  });
+  const { field: secondFactorMethodField } = useController({
+    control,
+    name: "secondFactorMethod",
+  });
+  const selectedMethod = secondFactorMethodField.value;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+      <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-lg font-semibold text-slate-950">
+              Generate new recovery codes
+            </p>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              Your old unused recovery codes will be disabled immediately after a
+              new set is created.
+            </p>
+          </div>
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-semibold">Verification required</p>
+          <p className="mt-1 text-amber-800">
+            Confirm your identity before replacing the current recovery codes.
           </p>
         </div>
-        <button
-          className="icon-button"
-          type="button"
-          aria-label="Close"
-          onClick={onClose}
-        >
-          <X size={18} />
-        </button>
-      </div>
 
-      <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-        <p className="font-semibold">Verification required</p>
-        <p className="mt-1 text-amber-800">
-          Confirm your identity before replacing the current recovery codes.
-        </p>
-      </div>
-
-      <div className="mt-4 space-y-3">
-        {!isOAuthProvider ? (
-          <label className="block text-sm font-semibold text-slate-700">
-            Password
-            <input
-              className="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-normal outline-none focus:border-blue-500"
-              value={form.password}
-              type="password"
-              autoComplete="current-password"
-              onChange={(event) =>
-                onChange({ ...form, password: event.target.value })
-              }
+        <div className="mt-4 space-y-3">
+          {!isOAuthProvider ? (
+            <Controller
+              control={control}
+              name="password"
+              render={({ field }) => (
+                <label className="block text-sm font-semibold text-slate-700">
+                  Password
+                  <input
+                    className={[
+                      "mt-2 h-10 w-full rounded-lg bg-white px-3 text-sm font-normal outline-none",
+                      errors.password
+                        ? "border border-red-300 focus:border-red-500"
+                        : "border border-slate-200 focus:border-blue-500",
+                    ].join(" ")}
+                    value={field.value ?? ""}
+                    type="password"
+                    autoComplete="current-password"
+                    onChange={(event) => field.onChange(event.target.value)}
+                  />
+                  {errors.password ? (
+                    <p className="mt-1 text-xs font-medium text-red-600">
+                      {errors.password.message}
+                    </p>
+                  ) : null}
+                </label>
+              )}
             />
-          </label>
-        ) : null}
+          ) : null}
 
-        <div className="grid grid-cols-2 gap-2">
-          {(["totp", "recovery"] as const).map((method) => (
-            <button
-              className={[
-                "rounded-lg border px-3 py-2 text-sm font-semibold",
-                form.secondFactorMethod === method
-                  ? "border-blue-600 bg-blue-50 text-blue-700"
-                  : "border-slate-200 bg-white text-slate-700",
-              ].join(" ")}
-              type="button"
-              key={method}
-              onClick={() =>
-                onChange({
-                  ...form,
-                  secondFactorMethod: method,
-                  secondFactorCode: "",
-                })
-              }
-            >
-              {method === "totp" ? "Authenticator code" : "Recovery code"}
-            </button>
-          ))}
+          <div className="grid grid-cols-2 gap-2">
+            {(["totp", "recovery"] as const).map((method) => (
+              <button
+                className={[
+                  "rounded-lg border px-3 py-2 text-sm font-semibold",
+                  selectedMethod === method
+                    ? "border-blue-600 bg-blue-50 text-blue-700"
+                    : "border-slate-200 bg-white text-slate-700",
+                ].join(" ")}
+                type="button"
+                key={method}
+                onClick={() => {
+                  setValue("secondFactorMethod", method);
+                  setValue("secondFactorCode", "");
+                }}
+              >
+                {method === "totp" ? "Authenticator code" : "Recovery code"}
+              </button>
+            ))}
+          </div>
+
+          <Controller
+            control={control}
+            name="secondFactorCode"
+            render={({ field }) => (
+              <label className="block text-sm font-semibold text-slate-700">
+                {selectedMethod === "totp"
+                  ? "Authenticator code"
+                  : "Unused recovery code"}
+                <input
+                  className={[
+                    "mt-2 h-10 w-full rounded-lg bg-white px-3 text-sm font-normal outline-none",
+                    errors.secondFactorCode
+                      ? "border border-red-300 focus:border-red-500"
+                      : "border border-slate-200 focus:border-blue-500",
+                  ].join(" ")}
+                  value={field.value}
+                  type="text"
+                  autoComplete={selectedMethod === "totp" ? "one-time-code" : "off"}
+                  placeholder={selectedMethod === "totp" ? "123456" : "ABCD-1234-EFGH"}
+                  onChange={(event) => field.onChange(event.target.value)}
+                />
+                {errors.secondFactorCode ? (
+                  <p className="mt-1 text-xs font-medium text-red-600">
+                    {errors.secondFactorCode.message}
+                  </p>
+                ) : null}
+              </label>
+            )}
+          />
         </div>
 
-        <label className="block text-sm font-semibold text-slate-700">
-          {form.secondFactorMethod === "totp"
-            ? "Authenticator code"
-            : "Unused recovery code"}
-          <input
-            className="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-normal outline-none focus:border-blue-500"
-            value={form.secondFactorCode}
-            type="text"
-            autoComplete={
-              form.secondFactorMethod === "totp" ? "one-time-code" : "off"
-            }
-            placeholder={
-              form.secondFactorMethod === "totp" ? "123456" : "ABCD-1234-EFGH"
-            }
-            onChange={(event) =>
-              onChange({ ...form, secondFactorCode: event.target.value })
-            }
-          />
-        </label>
-      </div>
-
-      <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
-        <button className="secondary-button" type="button" onClick={onClose}>
-          Cancel
-        </button>
-        {isOAuthProvider ? (
+        <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+          <button className="secondary-button" type="button" onClick={onClose}>
+            Cancel
+          </button>
           <button
             className="primary-button"
             type="button"
             disabled={isSubmitting}
-            onClick={onOAuthGenerate}
+            onClick={handleSubmit((values) => onGenerate(values, isOAuthProvider))}
           >
-            Verify with {provider === "github" ? "GitHub" : "Google"}
+            {isOAuthProvider
+              ? `Verify with ${provider === "github" ? "GitHub" : "Google"}`
+              : "Generate new codes"}
           </button>
-        ) : (
-          <button
-            className="primary-button"
-            type="button"
-            disabled={isSubmitting}
-            onClick={onGenerate}
-          >
-            Generate new codes
-          </button>
-        )}
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 const SaveRecoveryCodesModal = ({
   codes,
