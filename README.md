@@ -2,6 +2,18 @@
 
 AegisID is an identity and access management web application that demonstrates modern authentication and authorization patterns in one place. It includes local email/password login, OAuth login, JWT sessions, TOTP two-factor authentication, recovery codes, passkeys, role-based access control, and an admin audit console.
 
+## Main Features
+
+- Local registration and login with Argon2id password hashing
+- Google and GitHub OAuth login
+- JWT access token and refresh token session flow
+- TOTP authenticator app setup and verification
+- One-time recovery codes stored only as hashes
+- WebAuthn/passkey registration and login
+- USER and ADMIN role-based access control
+- Admin user management and audit logs
+- Frontend form validation with React Hook Form and Zod
+
 ## Architecture
 
 ```text
@@ -137,15 +149,3 @@ cd frontend
 npm run lint
 npm run build
 ```
-
-## Main Features
-
-- Local registration and login with Argon2id password hashing
-- Google and GitHub OAuth login
-- JWT access token and refresh token session flow
-- TOTP authenticator app setup and verification
-- One-time recovery codes stored only as hashes
-- WebAuthn/passkey registration and login
-- USER and ADMIN role-based access control
-- Admin user management and audit logs
-- Frontend form validation with React Hook Form and Zod
