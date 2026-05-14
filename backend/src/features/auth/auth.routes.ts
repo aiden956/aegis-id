@@ -1,4 +1,4 @@
-import { Router, type Response } from "express";
+import { Router, type Request, type Response } from "express";
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/types";
 import { env } from "../../config/env.js";
 import { requireAuth } from "../../middleware/auth.js";
@@ -6,12 +6,19 @@ import { prisma } from "../../prisma.js";
 import {
   clearAuthCookies,
   cookieNames,
+  createRecoveryOAuthChallengeToken,
   hashRefreshToken,
   setAccessCookie,
   setRefreshCookie,
+  verifyRecoveryOAuthChallengeToken,
 } from "../../utils/tokens.js";
 import { writeAuditLog } from "../audit/audit.service.js";
-import { loginSchema, registerSchema } from "./auth.schemas.js";
+import {
+  loginSchema,
+  recoveryCodeSecondFactorSchema,
+  regenerateRecoveryCodesSchema,
+  registerSchema,
+} from "./auth.schemas.js";
 import {
   beginTwoFactorSetup,
   createSession,
@@ -20,11 +27,19 @@ import {
   createOAuthState,
   disableTwoFactor,
   enableTwoFactor,
+  getRecoveryCodeStatus,
+  getTwoFactorChallengeUser,
+  getUserOAuthProvider,
   loginLocalUser,
   loginWithOAuthProvider,
+  type ProviderName,
+  regenerateRecoveryCodes,
   refreshSession,
   registerLocalUser,
   revokeRefreshToken,
+  type TwoFactorVerifyMethod,
+  verifyOAuthReauthentication,
+  verifyRecoveryCodeSecondFactor,
   verifyTwoFactorLogin,
 } from "./auth.service.js";
 import {
@@ -40,6 +55,13 @@ const oauthStateCookieName = "oauth_state";
 const twoFactorChallengeCookieName = "two_factor_challenge";
 const webauthnRegistrationChallengeCookieName = "webauthn_registration_challenge";
 const webauthnAuthenticationChallengeCookieName = "webauthn_authentication_challenge";
+const recoveryOAuthChallengeCookieName = "recovery_oauth_challenge";
+const recoveryCodesResultCookieName = "recovery_codes_result";
+
+const pendingRecoveryCodeResults = new Map<
+  string,
+  { userId: string; recoveryCodes: string[]; expiresAt: number }
+>();
 
 const cookieBaseConfig = {
   httpOnly: true,
@@ -60,6 +82,57 @@ const setTwoFactorChallengeCookie = (res: Response, token: string) => {
 
 const clearTwoFactorChallengeCookie = (res: Response) => {
   res.clearCookie(twoFactorChallengeCookieName, cookieBaseConfig);
+};
+
+const setRecoveryOAuthChallengeCookie = (
+  res: Response,
+  userId: string,
+  provider: ProviderName,
+) => {
+  res.cookie(
+    recoveryOAuthChallengeCookieName,
+    createRecoveryOAuthChallengeToken({ sub: userId, provider }),
+    {
+      ...cookieBaseConfig,
+      maxAge: 5 * 60 * 1000,
+    },
+  );
+};
+
+const clearRecoveryOAuthChallengeCookie = (res: Response) => {
+  res.clearCookie(recoveryOAuthChallengeCookieName, cookieBaseConfig);
+};
+
+const setRecoveryCodesResultCookie = (res: Response, resultId: string) => {
+  res.cookie(recoveryCodesResultCookieName, resultId, {
+    ...cookieBaseConfig,
+    maxAge: 5 * 60 * 1000,
+  });
+};
+
+const clearRecoveryCodesResultCookie = (res: Response) => {
+  res.clearCookie(recoveryCodesResultCookieName, cookieBaseConfig);
+};
+
+const savePendingRecoveryCodes = (userId: string, recoveryCodes: string[]) => {
+  const resultId = createOAuthState();
+  pendingRecoveryCodeResults.set(resultId, {
+    userId,
+    recoveryCodes,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+  });
+  return resultId;
+};
+
+const getPendingRecoveryCodes = (resultId: string, userId: string) => {
+  const result = pendingRecoveryCodeResults.get(resultId);
+  pendingRecoveryCodeResults.delete(resultId);
+
+  if (!result || result.userId !== userId || result.expiresAt < Date.now()) {
+    return null;
+  }
+
+  return result.recoveryCodes;
 };
 
 const setWebAuthnRegistrationChallengeCookie = (res: Response, value: string) => {
@@ -105,12 +178,52 @@ const getTwoFactorCode = (value: unknown) => {
   return value.trim();
 };
 
+const getTwoFactorVerifyMethod = (value: unknown): TwoFactorVerifyMethod => {
+  if (value === "recovery") {
+    return "recovery";
+  }
+  return "totp";
+};
+
 const getEmailInput = (value: unknown) => {
   if (typeof value !== "string") {
     return undefined;
   }
   const trimmed = value.trim().toLowerCase();
   return trimmed.length === 0 ? undefined : trimmed;
+};
+
+const isRecoveryOAuthState = (
+  cookieState: string | undefined,
+  provider: ProviderName,
+  state: string,
+) => cookieState === `recovery:${provider}:${state}`;
+
+const handleRecoveryOAuthCallback = async (
+  provider: ProviderName,
+  code: string,
+  req: Request,
+  res: Response,
+) => {
+  const challengeToken = req.cookies[recoveryOAuthChallengeCookieName] as
+    | string
+    | undefined;
+  if (!challengeToken) {
+    return res.redirect(`${env.CLIENT_ORIGIN}/security?recoveryError=missing_challenge`);
+  }
+
+  const challenge = verifyRecoveryOAuthChallengeToken(challengeToken);
+  if (challenge.provider !== provider) {
+    clearRecoveryOAuthChallengeCookie(res);
+    return res.redirect(`${env.CLIENT_ORIGIN}/security?recoveryError=provider_mismatch`);
+  }
+
+  await verifyOAuthReauthentication(challenge.sub, provider, code);
+  const recoveryCodes = await regenerateRecoveryCodes(challenge.sub);
+  const resultId = savePendingRecoveryCodes(challenge.sub, recoveryCodes);
+  clearRecoveryOAuthChallengeCookie(res);
+  setRecoveryCodesResultCookie(res, resultId);
+  return res.redirect(`${env.CLIENT_ORIGIN}/security?recoveryCodes=ready`);
 };
 
 authRoutes.post("/auth/register", async (req, res, next) => {
@@ -196,12 +309,13 @@ authRoutes.post("/auth/login", async (req, res, next) => {
 authRoutes.post("/auth/2fa/verify-login", async (req, res, next) => {
   const challengeToken = req.cookies[twoFactorChallengeCookieName] as string | undefined;
   const code = getTwoFactorCode(req.body?.code);
+  const method = getTwoFactorVerifyMethod(req.body?.method);
   if (!challengeToken || !code) {
     return res.status(400).json({ message: "Missing 2FA challenge or code" });
   }
 
   try {
-    const result = await verifyTwoFactorLogin(challengeToken, code);
+    const result = await verifyTwoFactorLogin(challengeToken, code, method);
     clearTwoFactorChallengeCookie(res);
     setAccessCookie(res, result.accessToken);
     setRefreshCookie(res, result.refreshToken);
@@ -209,7 +323,7 @@ authRoutes.post("/auth/2fa/verify-login", async (req, res, next) => {
     await writeAuditLog({
       actorId: result.user.id,
       targetUserId: result.user.id,
-      eventType: "TOTP_LOGIN_SUCCESS",
+      eventType: method === "recovery" ? "RECOVERY_CODE_LOGIN_SUCCESS" : "TOTP_LOGIN_SUCCESS",
       success: true,
       ipAddress: req.ip,
       userAgent: req.get("user-agent"),
@@ -218,7 +332,7 @@ authRoutes.post("/auth/2fa/verify-login", async (req, res, next) => {
     return res.json({ user: result.user });
   } catch (error) {
     await writeAuditLog({
-      eventType: "TOTP_LOGIN_FAILED",
+      eventType: method === "recovery" ? "RECOVERY_CODE_LOGIN_FAILED" : "TOTP_LOGIN_FAILED",
       success: false,
       ipAddress: req.ip,
       userAgent: req.get("user-agent"),
@@ -227,13 +341,44 @@ authRoutes.post("/auth/2fa/verify-login", async (req, res, next) => {
 
     if (
       error instanceof Error &&
-      (error.message === "INVALID_2FA_CODE" || error.message === "INVALID_2FA_CHALLENGE")
+      (error.message === "INVALID_2FA_CODE" ||
+        error.message === "INVALID_2FA_CHALLENGE" ||
+        error.message === "INVALID_RECOVERY_CODE")
     ) {
-      return res.status(401).json({ message: "Invalid authenticator code" });
+      return res.status(401).json({
+        message:
+          method === "recovery"
+            ? "Invalid recovery code"
+            : "Invalid authenticator code",
+      });
     }
 
     return next(error);
   }
+});
+
+authRoutes.get("/auth/2fa/challenge", async (req, res, next) => {
+  const challengeToken = req.cookies[twoFactorChallengeCookieName] as string | undefined;
+  if (!challengeToken) {
+    return res.status(404).json({ message: "No pending 2FA challenge" });
+  }
+
+  try {
+    const user = await getTwoFactorChallengeUser(challengeToken);
+    return res.json({ user });
+  } catch (error) {
+    clearTwoFactorChallengeCookie(res);
+    if (error instanceof Error && error.message === "INVALID_2FA_CHALLENGE") {
+      return res.status(404).json({ message: "No pending 2FA challenge" });
+    }
+    return next(error);
+  }
+});
+
+authRoutes.post("/auth/2fa/challenge/cancel", (_req, res) => {
+  clearAuthCookies(res);
+  clearTwoFactorChallengeCookie(res);
+  return res.status(204).send();
 });
 
 authRoutes.post("/auth/2fa/setup", requireAuth, async (req, res, next) => {
@@ -261,16 +406,24 @@ authRoutes.post("/auth/2fa/enable", requireAuth, async (req, res, next) => {
   }
 
   try {
-    const user = await enableTwoFactor(req.authUser!.id, code);
+    const result = await enableTwoFactor(req.authUser!.id, code);
     await writeAuditLog({
-      actorId: user.id,
-      targetUserId: user.id,
+      actorId: result.user.id,
+      targetUserId: result.user.id,
       eventType: "TOTP_ENABLED",
       success: true,
       ipAddress: req.ip,
       userAgent: req.get("user-agent"),
     });
-    return res.json({ user: { ...user, hasPasskey: true } });
+    await writeAuditLog({
+      actorId: result.user.id,
+      targetUserId: result.user.id,
+      eventType: "RECOVERY_CODES_CREATED",
+      success: true,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent"),
+    });
+    return res.json({ user: result.user, recoveryCodes: result.recoveryCodes });
   } catch (error) {
     if (
       error instanceof Error &&
@@ -280,6 +433,108 @@ authRoutes.post("/auth/2fa/enable", requireAuth, async (req, res, next) => {
     }
     return next(error);
   }
+});
+
+authRoutes.get("/auth/2fa/recovery-codes", requireAuth, async (req, res, next) => {
+  try {
+    const status = await getRecoveryCodeStatus(req.authUser!.id);
+    return res.json(status);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+authRoutes.post("/auth/2fa/recovery-codes/regenerate", requireAuth, async (req, res, next) => {
+  const parsed = regenerateRecoveryCodesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Password and second-factor verification are required",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+  }
+
+  try {
+    const recoveryCodes = await regenerateRecoveryCodes(req.authUser!.id, parsed.data);
+    await writeAuditLog({
+      actorId: req.authUser!.id,
+      targetUserId: req.authUser!.id,
+      eventType: "RECOVERY_CODES_REGENERATED",
+      success: true,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent"),
+    });
+    return res.json({ recoveryCodes });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === "TOTP_NOT_ENABLED" ||
+        error.message === "PASSWORD_REQUIRED" ||
+        error.message === "OAUTH_REAUTH_REQUIRED" ||
+        error.message === "INVALID_PASSWORD" ||
+        error.message === "INVALID_2FA_CODE" ||
+        error.message === "INVALID_RECOVERY_CODE" ||
+        error.message === "MISSING_2FA_SECRET")
+    ) {
+      return res.status(400).json({
+        message: "We could not verify your password or second-factor code",
+      });
+    }
+    return next(error);
+  }
+});
+
+authRoutes.post("/auth/2fa/recovery-codes/oauth/start", requireAuth, async (req, res, next) => {
+  const parsed = recoveryCodeSecondFactorSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Second-factor verification is required",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+  }
+
+  try {
+    const { provider } = await getUserOAuthProvider(req.authUser!.id);
+    await verifyRecoveryCodeSecondFactor(
+      req.authUser!.id,
+      parsed.data.secondFactorMethod,
+      parsed.data.secondFactorCode,
+    );
+
+    const state = createOAuthState();
+    res.cookie(oauthStateCookieName, `recovery:${provider}:${state}`, cookieBaseConfig);
+    setRecoveryOAuthChallengeCookie(res, req.authUser!.id, provider);
+
+    const authorizationUrl =
+      provider === "google"
+        ? createGoogleAuthorizationUrl(state)
+        : createGitHubAuthorizationUrl(state);
+
+    return res.json({ authorizationUrl });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === "OAUTH_REAUTH_NOT_AVAILABLE" ||
+        error.message === "INVALID_2FA_CODE" ||
+        error.message === "INVALID_RECOVERY_CODE" ||
+        error.message === "MISSING_2FA_SECRET")
+    ) {
+      return res.status(400).json({
+        message: "We could not verify your account for OAuth re-authentication",
+      });
+    }
+    return next(error);
+  }
+});
+
+authRoutes.get("/auth/2fa/recovery-codes/pending", requireAuth, (req, res) => {
+  const resultId = req.cookies[recoveryCodesResultCookieName] as string | undefined;
+  if (!resultId) {
+    return res.json({ recoveryCodes: null });
+  }
+
+  clearRecoveryCodesResultCookie(res);
+  const recoveryCodes = getPendingRecoveryCodes(resultId, req.authUser!.id);
+  return res.json({ recoveryCodes });
 });
 
 authRoutes.post("/auth/2fa/disable", requireAuth, async (req, res, next) => {
@@ -454,7 +709,35 @@ authRoutes.get("/auth/google/callback", async (req, res, next) => {
   const cookieState = req.cookies[oauthStateCookieName] as string | undefined;
   res.clearCookie(oauthStateCookieName, cookieBaseConfig);
 
-  if (!state || !code || cookieState !== `google:${state}`) {
+  if (!state || !code) {
+    return res.redirect(redirectToLoginWithError("oauth_invalid_state"));
+  }
+
+  if (isRecoveryOAuthState(cookieState, "google", state)) {
+    try {
+      await handleRecoveryOAuthCallback("google", code, req, res);
+      await writeAuditLog({
+        eventType: "RECOVERY_CODES_OAUTH_REAUTH_SUCCESS",
+        success: true,
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+        details: "google",
+      });
+      return;
+    } catch (error) {
+      clearRecoveryOAuthChallengeCookie(res);
+      await writeAuditLog({
+        eventType: "RECOVERY_CODES_OAUTH_REAUTH_FAILED",
+        success: false,
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+        details: error instanceof Error ? error.message : "google reauth failed",
+      });
+      return res.redirect(`${env.CLIENT_ORIGIN}/security?recoveryError=oauth_reauth_failed`);
+    }
+  }
+
+  if (cookieState !== `google:${state}`) {
     return res.redirect(redirectToLoginWithError("oauth_invalid_state"));
   }
 
@@ -463,6 +746,15 @@ authRoutes.get("/auth/google/callback", async (req, res, next) => {
     if (result.twoFactorRequired) {
       clearAuthCookies(res);
       setTwoFactorChallengeCookie(res, result.challengeToken);
+      await writeAuditLog({
+        actorId: result.user.id,
+        targetUserId: result.user.id,
+        eventType: "OAUTH_LOGIN_2FA_REQUIRED",
+        success: true,
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+        details: "google",
+      });
       return res.redirect(`${env.CLIENT_ORIGIN}/verify-2fa`);
     }
 
@@ -519,7 +811,35 @@ authRoutes.get("/auth/github/callback", async (req, res, next) => {
   const cookieState = req.cookies[oauthStateCookieName] as string | undefined;
   res.clearCookie(oauthStateCookieName, cookieBaseConfig);
 
-  if (!state || !code || cookieState !== `github:${state}`) {
+  if (!state || !code) {
+    return res.redirect(redirectToLoginWithError("oauth_invalid_state"));
+  }
+
+  if (isRecoveryOAuthState(cookieState, "github", state)) {
+    try {
+      await handleRecoveryOAuthCallback("github", code, req, res);
+      await writeAuditLog({
+        eventType: "RECOVERY_CODES_OAUTH_REAUTH_SUCCESS",
+        success: true,
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+        details: "github",
+      });
+      return;
+    } catch (error) {
+      clearRecoveryOAuthChallengeCookie(res);
+      await writeAuditLog({
+        eventType: "RECOVERY_CODES_OAUTH_REAUTH_FAILED",
+        success: false,
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+        details: error instanceof Error ? error.message : "github reauth failed",
+      });
+      return res.redirect(`${env.CLIENT_ORIGIN}/security?recoveryError=oauth_reauth_failed`);
+    }
+  }
+
+  if (cookieState !== `github:${state}`) {
     return res.redirect(redirectToLoginWithError("oauth_invalid_state"));
   }
 
@@ -528,6 +848,15 @@ authRoutes.get("/auth/github/callback", async (req, res, next) => {
     if (result.twoFactorRequired) {
       clearAuthCookies(res);
       setTwoFactorChallengeCookie(res, result.challengeToken);
+      await writeAuditLog({
+        actorId: result.user.id,
+        targetUserId: result.user.id,
+        eventType: "OAUTH_LOGIN_2FA_REQUIRED",
+        success: true,
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+        details: "github",
+      });
       return res.redirect(`${env.CLIENT_ORIGIN}/verify-2fa`);
     }
 

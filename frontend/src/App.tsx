@@ -3,15 +3,22 @@ import { BrowserRouter } from "react-router";
 import { getAuditLogs, getAdminUsers, updateUserRole } from "./api/admin";
 import {
   beginTwoFactorSetup,
+  cancelTwoFactorChallenge,
+  consumePendingRecoveryCodes,
   disableTwoFactor,
   enableTwoFactor,
   getCurrentUser,
+  getPendingTwoFactorChallenge,
+  getRecoveryCodeStatus,
   getWebAuthnLoginOptions,
   getWebAuthnRegistrationOptions,
   login,
+  regenerateRecoveryCodes,
   logout,
   refreshSession,
   register,
+  startOAuthRecoveryCodeRegeneration,
+  type RegenerateRecoveryCodesPayload,
   verifyWebAuthnLogin,
   verifyWebAuthnRegistration,
   verifyTwoFactorLogin,
@@ -26,6 +33,21 @@ const App = () => {
   const [pendingUser, setPendingUser] = useState<User | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [recoveryCodeStatus, setRecoveryCodeStatus] = useState<{
+    total: number;
+    remaining: number;
+  } | null>(null);
+
+  const syncRecoveryCodeStatus = useCallback(async (user: User | null) => {
+    if (!user?.isTwoFactorEnabled) {
+      setRecoveryCodeStatus(null);
+      return null;
+    }
+
+    const nextStatus = await getRecoveryCodeStatus();
+    setRecoveryCodeStatus(nextStatus);
+    return nextStatus;
+  }, []);
 
   const syncAdminData = useCallback(async (user: User | null) => {
     if (!user || user.role !== "ADMIN") {
@@ -48,6 +70,7 @@ const App = () => {
       setCurrentUser(user);
       setPendingUser(null);
       setStatus("authenticated");
+      await syncRecoveryCodeStatus(user);
       await syncAdminData(user);
       return;
     } catch {
@@ -59,14 +82,27 @@ const App = () => {
       setCurrentUser(user);
       setPendingUser(null);
       setStatus("authenticated");
+      await syncRecoveryCodeStatus(user);
       await syncAdminData(user);
+      return;
+    } catch {
+      // Continue to pending 2FA fallback.
+    }
+
+    try {
+      const user = await getPendingTwoFactorChallenge();
+      setCurrentUser(null);
+      setPendingUser(user);
+      setRecoveryCodeStatus(null);
+      setStatus("pending_2fa");
       return;
     } catch {
       setCurrentUser(null);
       setPendingUser(null);
+      setRecoveryCodeStatus(null);
       setStatus("anonymous");
     }
-  }, [syncAdminData]);
+  }, [syncAdminData, syncRecoveryCodeStatus]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -90,23 +126,51 @@ const App = () => {
       setCurrentUser(result.user);
       setPendingUser(null);
       setStatus("authenticated");
+      await syncRecoveryCodeStatus(result.user);
       await syncAdminData(result.user);
       return result.user.role === "ADMIN" ? "/admin" : "/dashboard";
     },
-    [syncAdminData],
+    [syncAdminData, syncRecoveryCodeStatus],
   );
 
   const handleVerifyTwoFactor = useCallback(
     async (code: string) => {
-      const user = await verifyTwoFactorLogin(code);
+      const user = await verifyTwoFactorLogin(code, "totp");
       setCurrentUser(user);
       setPendingUser(null);
       setStatus("authenticated");
+      await syncRecoveryCodeStatus(user);
       await syncAdminData(user);
       return user.role === "ADMIN" ? "/admin" : "/dashboard";
     },
-    [syncAdminData],
+    [syncAdminData, syncRecoveryCodeStatus],
   );
+
+  const handleVerifyRecoveryCode = useCallback(
+    async (code: string) => {
+      const user = await verifyTwoFactorLogin(code, "recovery");
+      setCurrentUser(user);
+      setPendingUser(null);
+      setStatus("authenticated");
+      await syncRecoveryCodeStatus(user);
+      await syncAdminData(user);
+      return user.role === "ADMIN" ? "/admin" : "/dashboard";
+    },
+    [syncAdminData, syncRecoveryCodeStatus],
+  );
+
+  const handleCancelTwoFactorChallenge = useCallback(async () => {
+    try {
+      await cancelTwoFactorChallenge();
+    } finally {
+      setCurrentUser(null);
+      setPendingUser(null);
+      setRecoveryCodeStatus(null);
+      setUsers([]);
+      setLogs([]);
+      setStatus("anonymous");
+    }
+  }, []);
 
   const handleRegister = useCallback(
     async (name: string, email: string, password: string) => {
@@ -114,10 +178,11 @@ const App = () => {
       setCurrentUser(user);
       setPendingUser(null);
       setStatus("authenticated");
+      await syncRecoveryCodeStatus(user);
       await syncAdminData(user);
       return "/dashboard";
     },
-    [syncAdminData],
+    [syncAdminData, syncRecoveryCodeStatus],
   );
 
   const handleLogout = useCallback(async () => {
@@ -127,6 +192,7 @@ const App = () => {
       setStatus("anonymous");
       setCurrentUser(null);
       setPendingUser(null);
+      setRecoveryCodeStatus(null);
       setUsers([]);
       setLogs([]);
     }
@@ -141,13 +207,55 @@ const App = () => {
   }, []);
 
   const handleEnableTwoFactor = useCallback(async (code: string) => {
-    const user = await enableTwoFactor(code);
-    setCurrentUser(user);
+    const result = await enableTwoFactor(code);
+    setCurrentUser(result.user);
+    setRecoveryCodeStatus({
+      total: result.recoveryCodes.length,
+      remaining: result.recoveryCodes.length,
+    });
+    return result.recoveryCodes;
   }, []);
 
   const handleDisableTwoFactor = useCallback(async (code: string) => {
     const user = await disableTwoFactor(code);
     setCurrentUser(user);
+    setRecoveryCodeStatus(null);
+  }, []);
+
+  const handleGetRecoveryCodeStatus = useCallback(async () => {
+    const nextStatus = await getRecoveryCodeStatus();
+    setRecoveryCodeStatus(nextStatus);
+    return nextStatus;
+  }, []);
+
+  const handleRegenerateRecoveryCodes = useCallback(
+    async (payload: RegenerateRecoveryCodesPayload) => {
+      const recoveryCodes = await regenerateRecoveryCodes(payload);
+      setRecoveryCodeStatus({
+        total: recoveryCodes.length,
+        remaining: recoveryCodes.length,
+      });
+      return recoveryCodes;
+    },
+    [],
+  );
+
+  const handleStartOAuthRecoveryCodeRegeneration = useCallback(
+    async (payload: Omit<RegenerateRecoveryCodesPayload, "password">) => {
+      await startOAuthRecoveryCodeRegeneration(payload);
+    },
+    [],
+  );
+
+  const handleConsumePendingRecoveryCodes = useCallback(async () => {
+    const recoveryCodes = await consumePendingRecoveryCodes();
+    if (recoveryCodes) {
+      setRecoveryCodeStatus({
+        total: recoveryCodes.length,
+        remaining: recoveryCodes.length,
+      });
+    }
+    return recoveryCodes;
   }, []);
 
   const handleRegisterPasskey = useCallback(async () => {
@@ -156,7 +264,8 @@ const App = () => {
     await verifyWebAuthnRegistration(credential);
     const user = await getCurrentUser();
     setCurrentUser(user);
-  }, []);
+    await syncRecoveryCodeStatus(user);
+  }, [syncRecoveryCodeStatus]);
 
   const handleLoginWithPasskey = useCallback(
     async (email?: string) => {
@@ -167,10 +276,11 @@ const App = () => {
       setCurrentUser(user);
       setPendingUser(null);
       setStatus("authenticated");
+      await syncRecoveryCodeStatus(user);
       await syncAdminData(user);
       return user.role === "ADMIN" ? "/admin" : "/dashboard";
     },
-    [syncAdminData],
+    [syncAdminData, syncRecoveryCodeStatus],
   );
 
   return (
@@ -178,18 +288,25 @@ const App = () => {
       <AppRoutes
         status={status}
         currentUser={currentUser}
+        recoveryCodeStatus={recoveryCodeStatus}
         pendingUser={pendingUser}
         users={users}
         logs={logs}
         onLogin={handleLogin}
         onRegister={handleRegister}
         onVerifyTwoFactor={handleVerifyTwoFactor}
+        onVerifyRecoveryCode={handleVerifyRecoveryCode}
+        onCancelTwoFactorChallenge={handleCancelTwoFactorChallenge}
         onLoginWithPasskey={handleLoginWithPasskey}
         onLogout={handleLogout}
         onRoleChange={handleRoleChange}
         onStartTwoFactorSetup={beginTwoFactorSetup}
         onEnableTwoFactor={handleEnableTwoFactor}
         onDisableTwoFactor={handleDisableTwoFactor}
+        onGetRecoveryCodeStatus={handleGetRecoveryCodeStatus}
+        onRegenerateRecoveryCodes={handleRegenerateRecoveryCodes}
+        onStartOAuthRecoveryCodeRegeneration={handleStartOAuthRecoveryCodeRegeneration}
+        onConsumePendingRecoveryCodes={handleConsumePendingRecoveryCodes}
         onRegisterPasskey={handleRegisterPasskey}
       />
     </BrowserRouter>

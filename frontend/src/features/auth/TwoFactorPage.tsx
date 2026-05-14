@@ -1,6 +1,6 @@
 import { BadgeCheck, Smartphone } from "lucide-react";
 import { useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router";
+import { Navigate, useNavigate } from "react-router";
 import { Input } from "../../components/ui/Input";
 import type { User } from "../../types/iam";
 import { AuthFrame } from "./AuthFrame";
@@ -8,13 +8,22 @@ import { AuthFrame } from "./AuthFrame";
 type TwoFactorPageProps = {
   pendingUser: User | null;
   onVerify: (code: string) => Promise<string>;
+  onVerifyRecoveryCode: (code: string) => Promise<string>;
+  onCancelChallenge: () => Promise<void>;
 };
 
-export const TwoFactorPage = ({ pendingUser, onVerify }: TwoFactorPageProps) => {
+export const TwoFactorPage = ({
+  pendingUser,
+  onVerify,
+  onVerifyRecoveryCode,
+  onCancelChallenge,
+}: TwoFactorPageProps) => {
   const navigate = useNavigate();
   const [code, setCode] = useState("");
+  const [method, setMethod] = useState<"totp" | "recovery">("totp");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   if (!pendingUser) {
     return <Navigate to="/login" replace />;
@@ -24,7 +33,10 @@ export const TwoFactorPage = ({ pendingUser, onVerify }: TwoFactorPageProps) => 
     setError(null);
     setIsSubmitting(true);
     try {
-      const destination = await onVerify(code);
+      const destination =
+        method === "totp"
+          ? await onVerify(code)
+          : await onVerifyRecoveryCode(code);
       navigate(destination);
     } catch (verifyError) {
       setError(
@@ -34,6 +46,23 @@ export const TwoFactorPage = ({ pendingUser, onVerify }: TwoFactorPageProps) => 
       );
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleUseAnotherAccount = async () => {
+    setError(null);
+    setIsCancelling(true);
+    try {
+      await onCancelChallenge();
+      navigate("/login", { replace: true });
+    } catch (cancelError) {
+      setError(
+        cancelError instanceof Error
+          ? cancelError.message
+          : "Unable to return to sign in. Please try again.",
+      );
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -53,14 +82,27 @@ export const TwoFactorPage = ({ pendingUser, onVerify }: TwoFactorPageProps) => 
         </div>
       </div>
       <Input
-        autoComplete="one-time-code"
-        label="6-digit code"
-        name="totp_code"
+        autoComplete={method === "totp" ? "one-time-code" : "off"}
+        label={method === "totp" ? "6-digit code" : "Recovery code"}
+        name={method === "totp" ? "totp_code" : "recovery_code"}
         onChange={setCode}
-        placeholder="123456"
+        placeholder={method === "totp" ? "123456" : "ABCD-1234-EFGH"}
         type="text"
         value={code}
       />
+      <button
+        className="text-left text-sm font-semibold text-blue-700"
+        type="button"
+        onClick={() => {
+          setError(null);
+          setCode("");
+          setMethod((existingMethod) =>
+            existingMethod === "totp" ? "recovery" : "totp",
+          );
+        }}
+      >
+        {method === "totp" ? "Use recovery code instead" : "Use authenticator code instead"}
+      </button>
       {error ? <p className="text-sm font-medium text-red-700">{error}</p> : null}
       <button
         className="primary-button w-full"
@@ -71,9 +113,14 @@ export const TwoFactorPage = ({ pendingUser, onVerify }: TwoFactorPageProps) => 
         <BadgeCheck size={18} />
         {isSubmitting ? "Verifying..." : "Verify and continue"}
       </button>
-      <Link className="text-center text-sm font-semibold text-blue-700" to="/login">
-        Use another account
-      </Link>
+      <button
+        className="text-center text-sm font-semibold text-blue-700 disabled:text-slate-400"
+        type="button"
+        disabled={isCancelling}
+        onClick={handleUseAnotherAccount}
+      >
+        {isCancelling ? "Returning to sign in..." : "Use another account"}
+      </button>
     </AuthFrame>
   );
 };

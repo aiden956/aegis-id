@@ -12,40 +12,57 @@ import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { ProfilePage } from "../features/profile/ProfilePage";
 import { SecurityPage } from "../features/security/SecurityPage";
 import type { AuditLog, AuthStatus, Role, User } from "../types/iam";
+import type { RegenerateRecoveryCodesPayload } from "../api/auth";
 
 type AppRoutesProps = {
   status: AuthStatus;
   currentUser: User | null;
+  recoveryCodeStatus: { total: number; remaining: number } | null;
   pendingUser: User | null;
   users: User[];
   logs: AuditLog[];
   onLogin: (email: string, password: string) => Promise<string>;
   onRegister: (name: string, email: string, password: string) => Promise<string>;
   onVerifyTwoFactor: (code: string) => Promise<string>;
+  onVerifyRecoveryCode: (code: string) => Promise<string>;
+  onCancelTwoFactorChallenge: () => Promise<void>;
   onLoginWithPasskey: (email?: string) => Promise<string>;
   onLogout: () => Promise<void>;
   onRoleChange: (userId: string, role: Role) => Promise<void>;
   onStartTwoFactorSetup: () => Promise<{ qrCodeDataUrl: string; manualEntryKey: string }>;
-  onEnableTwoFactor: (code: string) => Promise<void>;
+  onEnableTwoFactor: (code: string) => Promise<string[]>;
   onDisableTwoFactor: (code: string) => Promise<void>;
+  onGetRecoveryCodeStatus: () => Promise<{ total: number; remaining: number }>;
+  onRegenerateRecoveryCodes: (payload: RegenerateRecoveryCodesPayload) => Promise<string[]>;
+  onStartOAuthRecoveryCodeRegeneration: (
+    payload: Omit<RegenerateRecoveryCodesPayload, "password">,
+  ) => Promise<void>;
+  onConsumePendingRecoveryCodes: () => Promise<string[] | null>;
   onRegisterPasskey: () => Promise<void>;
 };
 
 export const AppRoutes = ({
   status,
   currentUser,
+  recoveryCodeStatus,
   pendingUser,
   users,
   logs,
   onLogin,
   onRegister,
   onVerifyTwoFactor,
+  onVerifyRecoveryCode,
+  onCancelTwoFactorChallenge,
   onLoginWithPasskey,
   onLogout,
   onRoleChange,
   onStartTwoFactorSetup,
   onEnableTwoFactor,
   onDisableTwoFactor,
+  onGetRecoveryCodeStatus,
+  onRegenerateRecoveryCodes,
+  onStartOAuthRecoveryCodeRegeneration,
+  onConsumePendingRecoveryCodes,
   onRegisterPasskey,
 }: AppRoutesProps) => (
   <Routes>
@@ -71,7 +88,14 @@ export const AppRoutes = ({
     />
     <Route
       path="/verify-2fa"
-      element={<TwoFactorPage pendingUser={pendingUser} onVerify={onVerifyTwoFactor} />}
+      element={
+        <TwoFactorPage
+          pendingUser={pendingUser}
+          onVerify={onVerifyTwoFactor}
+          onVerifyRecoveryCode={onVerifyRecoveryCode}
+          onCancelChallenge={onCancelTwoFactorChallenge}
+        />
+      }
     />
     <Route
       path="/unauthorized"
@@ -80,7 +104,11 @@ export const AppRoutes = ({
     <Route
       element={
         <ProtectedRoute status={status}>
-          <AppShell user={currentUser} onLogout={onLogout} />
+          <AppShell
+            user={currentUser}
+            recoveryCodeStatus={recoveryCodeStatus}
+            onLogout={onLogout}
+          />
         </ProtectedRoute>
       }
     >
@@ -91,9 +119,14 @@ export const AppRoutes = ({
         element={
           <SecurityPage
             user={currentUser}
+            recoveryCodeStatus={recoveryCodeStatus}
             onStartSetup={onStartTwoFactorSetup}
             onEnable={onEnableTwoFactor}
             onDisable={onDisableTwoFactor}
+            onGetRecoveryCodeStatus={onGetRecoveryCodeStatus}
+            onRegenerateRecoveryCodes={onRegenerateRecoveryCodes}
+            onStartOAuthRecoveryCodeRegeneration={onStartOAuthRecoveryCodeRegeneration}
+            onConsumePendingRecoveryCodes={onConsumePendingRecoveryCodes}
             onRegisterPasskey={onRegisterPasskey}
           />
         }

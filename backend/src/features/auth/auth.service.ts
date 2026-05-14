@@ -32,6 +32,12 @@ const userPublicSelect = {
 } satisfies Prisma.UserSelect;
 
 export type ProviderName = "google" | "github";
+export type TwoFactorVerifyMethod = "totp" | "recovery";
+export type RecoveryCodeRegenerationInput = {
+  password?: string;
+  secondFactorMethod: TwoFactorVerifyMethod;
+  secondFactorCode: string;
+};
 
 type SessionUser = {
   id: string;
@@ -51,6 +57,114 @@ export type AuthLoginResult =
       user: Prisma.UserGetPayload<{ select: typeof userPublicSelect }>;
       challengeToken: string;
     };
+
+const RECOVERY_CODE_COUNT = 10;
+const RECOVERY_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+const normalizeRecoveryCode = (code: string) =>
+  code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+const hashRecoveryCode = (code: string) =>
+  crypto.createHash("sha256").update(normalizeRecoveryCode(code)).digest("hex");
+
+const createRecoveryCodeValue = () => {
+  const chars = Array.from({ length: 12 }, () =>
+    RECOVERY_CODE_ALPHABET[crypto.randomInt(RECOVERY_CODE_ALPHABET.length)],
+  );
+  const raw = chars.join("");
+  return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
+};
+
+const createRecoveryCodes = async (userId: string, count = RECOVERY_CODE_COUNT) => {
+  const plaintextCodes = Array.from({ length: count }, createRecoveryCodeValue);
+  const rows = plaintextCodes.map((code) => ({
+    userId,
+    codeHash: hashRecoveryCode(code),
+  }));
+
+  await prisma.$transaction([
+    prisma.recoveryCode.deleteMany({
+      where: { userId },
+    }),
+    prisma.recoveryCode.createMany({
+      data: rows,
+    }),
+  ]);
+
+  return plaintextCodes;
+};
+
+const verifyUserTotpCode = async (userId: string, code: string) => {
+  const twoFactorSecret = await prisma.twoFactorSecret.findUnique({
+    where: { userId },
+    select: { secretEncrypted: true },
+  });
+  if (!twoFactorSecret) {
+    throw new Error("MISSING_2FA_SECRET");
+  }
+
+  const secret = decryptTwoFactorSecret(twoFactorSecret.secretEncrypted);
+  const normalizedCode = code.replace(/\s+/g, "");
+  if (!verifyTotpCode(secret, normalizedCode)) {
+    throw new Error("INVALID_2FA_CODE");
+  }
+};
+
+const consumeRecoveryCode = async (userId: string, code: string) => {
+  const recoveryCodes = await prisma.recoveryCode.findMany({
+    where: {
+      userId,
+      usedAt: null,
+    },
+    select: {
+      id: true,
+      codeHash: true,
+    },
+  });
+
+  const attemptedHash = hashRecoveryCode(code);
+  const matchedCode = recoveryCodes.find((item) => item.codeHash === attemptedHash);
+  if (!matchedCode) {
+    throw new Error("INVALID_RECOVERY_CODE");
+  }
+
+  await prisma.recoveryCode.update({
+    where: { id: matchedCode.id },
+    data: { usedAt: new Date() },
+  });
+};
+
+export const verifyRecoveryCodeSecondFactor = async (
+  userId: string,
+  method: TwoFactorVerifyMethod,
+  code: string,
+) => {
+  if (method === "totp") {
+    await verifyUserTotpCode(userId, code);
+    return;
+  }
+
+  await consumeRecoveryCode(userId, code);
+};
+
+export const getRecoveryCodeStatus = async (userId: string) => {
+  const [total, remaining] = await Promise.all([
+    prisma.recoveryCode.count({
+      where: { userId },
+    }),
+    prisma.recoveryCode.count({
+      where: {
+        userId,
+        usedAt: null,
+      },
+    }),
+  ]);
+
+  return {
+    total,
+    remaining,
+  };
+};
 
 export const createSession = async (user: SessionUser) => {
   const accessToken = createAccessToken({
@@ -187,7 +301,11 @@ export const loginLocalUser = async (input: {
   return finalizeLogin(publicUser);
 };
 
-export const verifyTwoFactorLogin = async (challengeToken: string, code: string) => {
+export const verifyTwoFactorLogin = async (
+  challengeToken: string,
+  code: string,
+  method: TwoFactorVerifyMethod,
+) => {
   const payload = verifyTwoFactorChallengeToken(challengeToken);
 
   const user = await prisma.user.findUnique({
@@ -198,19 +316,7 @@ export const verifyTwoFactorLogin = async (challengeToken: string, code: string)
     throw new Error("INVALID_2FA_CHALLENGE");
   }
 
-  const twoFactorSecret = await prisma.twoFactorSecret.findUnique({
-    where: { userId: user.id },
-    select: { secretEncrypted: true },
-  });
-  if (!twoFactorSecret) {
-    throw new Error("MISSING_2FA_SECRET");
-  }
-
-  const secret = decryptTwoFactorSecret(twoFactorSecret.secretEncrypted);
-  const normalizedCode = code.replace(/\s+/g, "");
-  if (!verifyTotpCode(secret, normalizedCode)) {
-    throw new Error("INVALID_2FA_CODE");
-  }
+  await verifyRecoveryCodeSecondFactor(user.id, method, code);
 
   const session = await createSession({
     id: user.id,
@@ -222,6 +328,20 @@ export const verifyTwoFactorLogin = async (challengeToken: string, code: string)
     user,
     ...session,
   };
+};
+
+export const getTwoFactorChallengeUser = async (challengeToken: string) => {
+  const payload = verifyTwoFactorChallengeToken(challengeToken);
+  const user = await prisma.user.findUnique({
+    where: { id: payload.sub },
+    select: userPublicSelect,
+  });
+
+  if (!user || !user.isTwoFactorEnabled) {
+    throw new Error("INVALID_2FA_CHALLENGE");
+  }
+
+  return user;
 };
 
 export const refreshSession = async (rawRefreshToken: string) => {
@@ -438,14 +558,14 @@ const getGitHubIdentity = async (code: string) => {
   };
 };
 
+export const getOAuthIdentity = async (provider: ProviderName, code: string) =>
+  provider === "google" ? getGoogleIdentity(code) : getGitHubIdentity(code);
+
 export const loginWithOAuthProvider = async (
   provider: ProviderName,
   code: string,
 ) => {
-  const identity =
-    provider === "google"
-      ? await getGoogleIdentity(code)
-      : await getGitHubIdentity(code);
+  const identity = await getOAuthIdentity(provider, code);
 
   const existingByProvider = await prisma.user.findFirst({
     where: {
@@ -515,11 +635,100 @@ export const enableTwoFactor = async (userId: string, code: string) => {
     throw new Error("INVALID_2FA_CODE");
   }
 
-  return prisma.user.update({
+  const user = await prisma.user.update({
     where: { id: userId },
     data: { isTwoFactorEnabled: true },
     select: userPublicSelect,
   });
+
+  const recoveryCodes = await createRecoveryCodes(user.id);
+  return { user, recoveryCodes };
+};
+
+export const regenerateRecoveryCodes = async (
+  userId: string,
+  input?: RecoveryCodeRegenerationInput,
+) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      isTwoFactorEnabled: true,
+      passwordHash: true,
+    },
+  });
+  if (!user || !user.isTwoFactorEnabled) {
+    throw new Error("TOTP_NOT_ENABLED");
+  }
+
+  if (input) {
+    if (!user.passwordHash) {
+      throw new Error("OAUTH_REAUTH_REQUIRED");
+    }
+
+    if (!input.password) {
+      throw new Error("PASSWORD_REQUIRED");
+    }
+    const validPassword = await verifyPassword(user.passwordHash, input.password);
+    if (!validPassword) {
+      throw new Error("INVALID_PASSWORD");
+    }
+
+    await verifyRecoveryCodeSecondFactor(
+      userId,
+      input.secondFactorMethod,
+      input.secondFactorCode,
+    );
+  }
+
+  const recoveryCodes = await createRecoveryCodes(userId);
+  return recoveryCodes;
+};
+
+export const getUserOAuthProvider = async (userId: string) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      provider: true,
+      providerId: true,
+      isTwoFactorEnabled: true,
+    },
+  });
+
+  if (
+    !user ||
+    !user.isTwoFactorEnabled ||
+    (user.provider !== "google" && user.provider !== "github") ||
+    !user.providerId
+  ) {
+    throw new Error("OAUTH_REAUTH_NOT_AVAILABLE");
+  }
+
+  return {
+    provider: user.provider as ProviderName,
+    providerId: user.providerId,
+  };
+};
+
+export const verifyOAuthReauthentication = async (
+  userId: string,
+  provider: ProviderName,
+  code: string,
+) => {
+  const [user, identity] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        provider: true,
+        providerId: true,
+      },
+    }),
+    getOAuthIdentity(provider, code),
+  ]);
+
+  if (!user || user.provider !== provider || user.providerId !== identity.providerId) {
+    throw new Error("OAUTH_REAUTH_MISMATCH");
+  }
 };
 
 export const disableTwoFactor = async (userId: string, code: string) => {
@@ -543,6 +752,9 @@ export const disableTwoFactor = async (userId: string, code: string) => {
       data: { isTwoFactorEnabled: false },
     }),
     prisma.twoFactorSecret.delete({
+      where: { userId },
+    }),
+    prisma.recoveryCode.deleteMany({
       where: { userId },
     }),
   ]);

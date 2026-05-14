@@ -1,4 +1,4 @@
-import { Activity, BarChart3, LayoutDashboard, LogOut, Settings, Shield, ShieldCheck, Users } from "lucide-react";
+import { Activity, AlertTriangle, BarChart3, LayoutDashboard, LogOut, Settings, Shield, ShieldCheck, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router";
 import { RoleBadge } from "../components/ui/RoleBadge";
@@ -6,11 +6,16 @@ import type { User } from "../types/iam";
 
 type AppShellProps = {
   user: User | null;
+  recoveryCodeStatus: { total: number; remaining: number } | null;
   onLogout: () => Promise<void>;
 };
 
-export const AppShell = ({ user, onLogout }: AppShellProps) => {
+export const AppShell = ({ user, recoveryCodeStatus, onLogout }: AppShellProps) => {
   const navigate = useNavigate();
+  const hasLowRecoveryCodes =
+    Boolean(user?.isTwoFactorEnabled) &&
+    Boolean(recoveryCodeStatus) &&
+    recoveryCodeStatus!.remaining <= 2;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-950">
@@ -82,6 +87,21 @@ export const AppShell = ({ user, onLogout }: AppShellProps) => {
 
         <main className="px-4 py-6 sm:px-6">
           <MobileNav user={user} />
+          {hasLowRecoveryCodes ? (
+            <div className="mx-auto mb-5 flex max-w-7xl items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+              <AlertTriangle className="mt-0.5 shrink-0" size={18} />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">Recovery codes are running low</p>
+                <p className="mt-1 text-sm text-amber-800">
+                  You have {recoveryCodeStatus?.remaining ?? 0} unused recovery
+                  codes left. Generate a new set from Security settings.
+                </p>
+              </div>
+              <Link className="text-sm font-semibold text-amber-950" to="/security">
+                Security
+              </Link>
+            </div>
+          ) : null}
           <div className="mx-auto max-w-7xl">
             <Outlet />
           </div>

@@ -16,6 +16,11 @@ type TwoFactorChallengePayload = {
   email: string;
 };
 
+type RecoveryOAuthChallengePayload = {
+  sub: string;
+  provider: "google" | "github";
+};
+
 const accessCookieName = "access_token";
 const refreshCookieName = "refresh_token";
 
@@ -34,6 +39,18 @@ export const createTwoFactorChallengeToken = (payload: TwoFactorChallengePayload
 
 export const verifyTwoFactorChallengeToken = (token: string): TwoFactorChallengePayload =>
   jwt.verify(token, env.JWT_ACCESS_SECRET) as TwoFactorChallengePayload;
+
+export const createRecoveryOAuthChallengeToken = (
+  payload: RecoveryOAuthChallengePayload,
+) =>
+  jwt.sign(payload, env.JWT_ACCESS_SECRET as Secret, {
+    expiresIn: "5m",
+  } as SignOptions);
+
+export const verifyRecoveryOAuthChallengeToken = (
+  token: string,
+): RecoveryOAuthChallengePayload =>
+  jwt.verify(token, env.JWT_ACCESS_SECRET) as RecoveryOAuthChallengePayload;
 
 export const createRefreshToken = () => crypto.randomBytes(48).toString("hex");
 

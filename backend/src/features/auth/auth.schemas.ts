@@ -12,3 +12,12 @@ export const loginSchema = z.object({
   email: emailSchema,
   password: z.string().min(1),
 });
+
+export const recoveryCodeSecondFactorSchema = z.object({
+  secondFactorMethod: z.enum(["totp", "recovery"]),
+  secondFactorCode: z.string().trim().min(6),
+});
+
+export const regenerateRecoveryCodesSchema = recoveryCodeSecondFactorSchema.extend({
+  password: z.string().optional(),
+});

@@ -25,11 +25,24 @@ model User {
   updatedAt          DateTime       @updatedAt
   refreshTokens      RefreshToken[]
   twoFactorSecret    TwoFactorSecret?
+  recoveryCodes      RecoveryCode[]
   webAuthnCredentials WebAuthnCredential[]
   auditEvents        AuditLog[]     @relation("AuditActor")
   targetAuditEvents  AuditLog[]     @relation("AuditTarget")
 
   @@unique([provider, providerId])
+}
+
+model RecoveryCode {
+  id        String   @id @default(cuid())
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([usedAt])
 }
 
 model WebAuthnCredential {

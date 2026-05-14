@@ -11,6 +11,19 @@ type AuthResponse = {
   user: User;
 };
 
+type EnableTwoFactorResponse = {
+  user: User;
+  recoveryCodes: string[];
+};
+
+export type RecoveryCodeSecondFactorMethod = "totp" | "recovery";
+
+export type RegenerateRecoveryCodesPayload = {
+  password?: string;
+  secondFactorMethod: RecoveryCodeSecondFactorMethod;
+  secondFactorCode: string;
+};
+
 type LoginResponse =
   | { user: User; twoFactorRequired?: false }
   | { user: User; twoFactorRequired: true };
@@ -54,12 +67,26 @@ export const startOAuthLogin = (provider: "google" | "github") => {
   window.location.assign(`${apiBase}/auth/${provider}`);
 };
 
-export const verifyTwoFactorLogin = async (code: string) => {
+export const verifyTwoFactorLogin = async (
+  code: string,
+  method: "totp" | "recovery" = "totp",
+) => {
   const response = await apiRequest<AuthResponse>("/auth/2fa/verify-login", {
     method: "POST",
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ code, method }),
   });
   return response.user;
+};
+
+export const getPendingTwoFactorChallenge = async () => {
+  const response = await apiRequest<AuthResponse>("/auth/2fa/challenge");
+  return response.user;
+};
+
+export const cancelTwoFactorChallenge = async () => {
+  await apiRequest<void>("/auth/2fa/challenge/cancel", {
+    method: "POST",
+  });
 };
 
 export const beginTwoFactorSetup = async () => {
@@ -69,11 +96,11 @@ export const beginTwoFactorSetup = async () => {
 };
 
 export const enableTwoFactor = async (code: string) => {
-  const response = await apiRequest<AuthResponse>("/auth/2fa/enable", {
+  const response = await apiRequest<EnableTwoFactorResponse>("/auth/2fa/enable", {
     method: "POST",
     body: JSON.stringify({ code }),
   });
-  return response.user;
+  return response;
 };
 
 export const disableTwoFactor = async (code: string) => {
@@ -82,6 +109,43 @@ export const disableTwoFactor = async (code: string) => {
     body: JSON.stringify({ code }),
   });
   return response.user;
+};
+
+export const getRecoveryCodeStatus = async () => {
+  return apiRequest<{ total: number; remaining: number }>("/auth/2fa/recovery-codes");
+};
+
+export const regenerateRecoveryCodes = async (
+  payload: RegenerateRecoveryCodesPayload,
+) => {
+  const response = await apiRequest<{ recoveryCodes: string[] }>(
+    "/auth/2fa/recovery-codes/regenerate",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+  return response.recoveryCodes;
+};
+
+export const startOAuthRecoveryCodeRegeneration = async (
+  payload: Omit<RegenerateRecoveryCodesPayload, "password">,
+) => {
+  const response = await apiRequest<{ authorizationUrl: string }>(
+    "/auth/2fa/recovery-codes/oauth/start",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+  window.location.assign(response.authorizationUrl);
+};
+
+export const consumePendingRecoveryCodes = async () => {
+  const response = await apiRequest<{ recoveryCodes: string[] | null }>(
+    "/auth/2fa/recovery-codes/pending",
+  );
+  return response.recoveryCodes;
 };
 
 export const getWebAuthnRegistrationOptions = async () => {
