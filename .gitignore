@@ -16,7 +16,6 @@ pnpm-debug.log*
 
 # Env / local
 .env
-.env.*
 *.local
 
 # OS / editor
